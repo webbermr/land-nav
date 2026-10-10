@@ -29,10 +29,11 @@ export class DesktopInput {
     this.yaw = 0;   // radians, 0 looks grid north (-Z), positive turns left (Three.js convention)
     this.pitch = 0;
     this.locked = false;
+    this.lookEnabled = true; // false while the mouse is needed for the map
     this.handlers = new Map();
 
     element.addEventListener('click', () => {
-      if (!this.locked) element.requestPointerLock?.();
+      if (!this.locked && this.lookEnabled) element.requestPointerLock?.();
     });
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === element;

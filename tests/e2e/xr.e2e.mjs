@@ -25,8 +25,50 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 await page.addInitScript(mock);
-await page.goto(`${base}?debug`, { waitUntil: 'load' });
-await page.waitForFunction(() => window.__landnav, null, { timeout: 60000 });
+const BEACON = { x: 1150, z: 880 };
+await page.goto(`${base}?debug&beacon=${BEACON.x},${BEACON.z}`, { waitUntil: 'load' });
+await page.waitForFunction(() => window.__landnav?.tools, null, { timeout: 60000 });
+await page.evaluate(() => { document.getElementById('help').hidden = true; });
+
+// In-page helpers for aiming controllers and finding points on the map board.
+await page.evaluate(async () => {
+  const THREE = await import('three');
+  const { gridAzimuth, gridToMagnetic } = await import('./src/coords.js');
+  const L = () => window.__landnav;
+  window.__t = {
+    // Point a controller space (hand 'left'|'right', kind 'ray'|'grip') from eye toward target, world coords.
+    aim(hand, kind, eye, target) {
+      const { player } = L();
+      player.updateMatrixWorld(true);
+      const e = player.worldToLocal(new THREE.Vector3(...eye));
+      const t = player.worldToLocal(new THREE.Vector3(...target));
+      const m = new THREE.Matrix4().lookAt(e, t, new THREE.Vector3(0, 1, 0));
+      m.setPosition(e);
+      window.__xr.pose[hand][kind] = new Float32Array(m.elements);
+    },
+    eye() { return L().camera.getWorldPosition(new THREE.Vector3()).toArray(); },
+    // Magnetic azimuth of a horizontal world direction.
+    magOf(dx, dz) { return gridToMagnetic(gridAzimuth(dx, dz), L().site.gm_angle_deg); },
+    // World point and normal on the map paper for a scene position.
+    onBoard(x, z) {
+      const { tools } = L();
+      const b = tools.map.boardOf({ x, z });
+      tools.map.paper.updateMatrixWorld(true);
+      const w = tools.map.paper.localToWorld(new THREE.Vector3(b.bx, b.by, 0));
+      const n = new THREE.Vector3(0, 0, 1).transformDirection(tools.map.paper.matrixWorld);
+      return { w: w.toArray(), n: n.toArray(), b };
+    },
+    // Page pixel of a scene position on the desktop map board.
+    screenOf(x, z) {
+      const { camera, renderer } = L();
+      camera.updateMatrixWorld(true);
+      const v = new THREE.Vector3(...window.__t.onBoard(x, z).w).project(camera);
+      const r = renderer.domElement.getBoundingClientRect();
+      return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
+    },
+    angleDiff(a, b) { const d = ((b - a) % 360 + 540) % 360 - 180; return Math.abs(d); },
+  };
+});
 
 const check = (name, fn) => fn().then(() => console.log(`ok   ${name}`), (e) => { console.log(`FAIL ${name}\n     ${e.message}`); process.exitCode = 1; });
 const frames = (n) => page.evaluate((n) => new Promise((res) => {
@@ -47,6 +89,70 @@ await check('desktop walk follows the ground at eye height', async () => {
     return { eye: p.y - terrain.heightAt(p.x, p.z) };
   });
   assert.ok(Math.abs(r.eye - 1.7) < 0.01, JSON.stringify(r));
+});
+
+await check('M2 desktop: compass reads the beacon within 1 degree of the computed magnetic azimuth', async () => {
+  await page.evaluate(({ x, z }) => {
+    const { input, player } = window.__landnav;
+    input.yaw = Math.atan2(-(x - player.position.x), -(z - player.position.z));
+    input.pitch = -0.3;
+  }, BEACON);
+  await page.keyboard.press('KeyC');
+  await page.waitForTimeout(2500);
+  const r = await page.evaluate(({ x, z }) => {
+    const { tools, player } = window.__landnav;
+    return { dial: tools.compass.dialReading, expected: window.__t.magOf(x - player.position.x, z - player.position.z) };
+  }, BEACON);
+  console.log(`     dial ${r.dial.toFixed(2)}, beacon ${r.expected.toFixed(2)}`);
+  assert.ok(await page.evaluate(([a, b]) => window.__t.angleDiff(a, b), [r.dial, r.expected]) <= 1);
+  // Bezel turns in 3 degree clicks on the wheel.
+  await page.mouse.move(640, 300);
+  await page.mouse.wheel(0, 100);
+  await page.waitForTimeout(200);
+  assert.equal(await page.evaluate(() => window.__landnav.tools.compass.bezelDeg), 3);
+  await page.keyboard.press('KeyC');
+  // Face grid north again; entering VR keeps the desktop heading.
+  await page.evaluate(() => { window.__landnav.input.pitch = 0; window.__landnav.input.yaw = 0; });
+});
+
+await check('M2 desktop: map dots, line, protractor, erase and zoom', async () => {
+  await page.keyboard.press('KeyM');
+  await page.waitForTimeout(500);
+  const A = { x: 900, z: 1100 }, B = { x: 1300, z: 700 };
+  const click = async (pt, button = 'left') => {
+    const s = await page.evaluate(({ x, z }) => window.__t.screenOf(x, z), pt);
+    await page.mouse.move(s.x, s.y);
+    await page.waitForTimeout(250); // let a frame update the hover
+    await page.mouse.click(s.x, s.y, { button });
+    await page.waitForTimeout(150);
+  };
+  await click(A); await click(B);
+  let st = await page.evaluate(() => { const m = window.__landnav.tools.map; return { dots: m.dots.map((d) => [d.x, d.z]), lines: m.lines.length }; });
+  assert.equal(st.dots.length, 2);
+  // One screen pixel is about 4 m of ground at this zoom.
+  assert.ok(Math.hypot(st.dots[0][0] - A.x, st.dots[0][1] - A.z) < 8, `dot A at ${st.dots[0]}`);
+  await click(A); await click(B);
+  const m = await page.evaluate(() => { const map = window.__landnav.tools.map; return { lines: map.lines.length, meas: map.measure(map.lastLine) }; });
+  assert.equal(m.lines, 1);
+  assert.ok(Math.abs(m.meas.grid - 45) < 1.5, `line az ${m.meas.grid}`);
+  assert.ok(Math.abs(m.meas.distance - Math.hypot(400, 400)) < 12, `line length ${m.meas.distance}`);
+  await click(A, 'right');
+  assert.ok(await page.evaluate(() => window.__landnav.tools.map.protractor.visible), 'protractor shown');
+  // Zoom toward A keeps A under the cursor.
+  const before = await page.evaluate(({ x, z }) => window.__t.screenOf(x, z), A);
+  for (let i = 0; i < 5; i++) { await page.mouse.wheel(0, -100); await page.waitForTimeout(80); }
+  const after = await page.evaluate(({ x, z }) => window.__t.screenOf(x, z), A);
+  assert.ok(Math.hypot(after.x - before.x, after.y - before.y) < 2, `A moved ${after.x - before.x},${after.y - before.y}`);
+  assert.ok(await page.evaluate(() => window.__landnav.tools.mapDistance < 0.3));
+  // Erase B with the cursor over it.
+  const sb = await page.evaluate(({ x, z }) => window.__t.screenOf(x, z), B);
+  await page.mouse.move(sb.x, sb.y);
+  await page.waitForTimeout(250);
+  await page.keyboard.press('Delete');
+  st = await page.evaluate(() => { const map = window.__landnav.tools.map; return { dots: map.dots.length, lines: map.lines.length }; });
+  assert.deepEqual(st, { dots: 1, lines: 0 });
+  await page.keyboard.press('KeyM');
+  await page.evaluate(() => window.__landnav.tools.map.clear());
 });
 
 await check('Enter VR button is offered', async () => {
@@ -138,6 +244,112 @@ await check('snap turn is off by default, 30 degrees when enabled', async () => 
   await frames(2);
   const turned = await page.evaluate(() => window.__landnav.player.rotation.y) - yaw0;
   assert.ok(Math.abs(turned + Math.PI / 6) < 1e-6, `turned ${turned}`);
+});
+
+await check('M2 VR: compass in the right hand reads the beacon within 1 degree', async () => {
+  await page.evaluate(({ x, z }) => {
+    const e = window.__t.eye();
+    const d = Math.hypot(x - e[0], z - e[2]);
+    window.__t.aim('right', 'ray', [e[0], e[1] - 0.3, e[2]], [e[0] + (x - e[0]) / d, e[1] - 0.3, e[2] + (z - e[2]) / d]);
+    window.__xr.buttons.right[1] = true;
+  }, BEACON);
+  await frames(40);
+  const r = await page.evaluate(({ x, z }) => {
+    const { tools } = window.__landnav;
+    const p = tools.compass.group.getWorldPosition(tools.compass.group.position.clone());
+    return {
+      visible: tools.compass.group.visible, body: tools.hands.right.body?.visible,
+      dial: tools.compass.dialReading, beacon: window.__t.magOf(x - p.x, z - p.z), tilt: tools.compass.heading.tilt,
+    };
+  }, BEACON);
+  console.log(`     dial ${r.dial.toFixed(2)}, beacon ${r.beacon.toFixed(2)}, tilt ${r.tilt.toFixed(1)}`);
+  assert.ok(r.visible && r.body === false, 'compass replaces the controller model');
+  assert.ok(await page.evaluate(([a, b]) => window.__t.angleDiff(a, b), [r.dial, r.beacon]) <= 1);
+});
+
+await check('M2 VR: tilted past 15 degrees the dial sticks, and frees when level', async () => {
+  const level = await page.evaluate(() => window.__landnav.tools.compass.dialReading);
+  // Pitch the compass up 30 degrees and swing it 40 degrees right.
+  await page.evaluate(() => {
+    const e = window.__t.eye();
+    const a = Math.PI / 4.5;
+    window.__t.aim('right', 'ray', [e[0], e[1] - 0.3, e[2]], [e[0] + Math.sin(a), e[1] - 0.3 + Math.tan(Math.PI / 6), e[2] - Math.cos(a)]);
+  });
+  await frames(30);
+  const stuck = await page.evaluate(() => ({ dial: window.__landnav.tools.compass.dialReading, stuck: window.__landnav.tools.compass.stuck }));
+  assert.ok(stuck.stuck, 'reports stuck');
+  assert.ok(await page.evaluate(([a, b]) => window.__t.angleDiff(a, b), [stuck.dial, level]) < 0.5, `dial moved to ${stuck.dial}`);
+  await page.evaluate(() => {
+    const e = window.__t.eye();
+    window.__t.aim('right', 'ray', [e[0], e[1] - 0.3, e[2]], [e[0] + 1, e[1] - 0.3, e[2]]);
+  });
+  await frames(40);
+  const free = await page.evaluate(() => window.__landnav.tools.compass.dialReading);
+  const east = await page.evaluate(() => window.__t.magOf(1, 0));
+  assert.ok(await page.evaluate(([a, b]) => window.__t.angleDiff(a, b), [free, east]) <= 1, `level again reads ${free}, want ${east}`);
+});
+
+await check('M2 VR: right stick clicks the bezel while the compass is held (and does not snap turn)', async () => {
+  const b0 = await page.evaluate(() => window.__landnav.tools.compass.bezelDeg);
+  const yaw0 = await page.evaluate(() => window.__landnav.player.rotation.y);
+  await page.evaluate(() => { window.__landnav.settings.snapTurn = true; window.__xr.axes.right = [0, 0, 1, 0]; });
+  await frames(2);
+  const first = await page.evaluate(() => window.__landnav.tools.compass.bezelDeg) - b0;
+  // Holding repeats after a pause (frame time, which is slow headless): wait for it.
+  await page.waitForFunction((b) => window.__landnav.tools.compass.bezelDeg - b > 3, b0, { timeout: 30000, polling: 50 });
+  const held = await page.evaluate(() => window.__landnav.tools.compass.bezelDeg) - b0;
+  await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, 0]; window.__landnav.settings.snapTurn = false; });
+  await frames(2);
+  assert.equal(first, 3);
+  assert.ok(held > 3 && held % 3 === 0, `held ${held}`);
+  assert.equal(await page.evaluate(() => window.__landnav.player.rotation.y), yaw0);
+  await page.evaluate(() => { window.__xr.buttons.right[1] = false; });
+  await frames(2);
+  assert.equal(await page.evaluate(() => window.__landnav.tools.compass.group.visible), false);
+});
+
+await check('M2 VR: map in the left hand; pencil dots, line, protractor, long-press erase', async () => {
+  await page.evaluate(() => { window.__xr.buttons.left[1] = true; });
+  await frames(3);
+  assert.ok(await page.evaluate(() => window.__landnav.tools.map.group.visible), 'map shown');
+  const A = { x: 700, z: 1300 }, B = { x: 1100, z: 900 };
+  const aimAt = (pt) => page.evaluate(({ x, z }) => {
+    const { w, n } = window.__t.onBoard(x, z);
+    window.__t.aim('right', 'ray', [w[0] + n[0] * 0.15, w[1] + n[1] * 0.15, w[2] + n[2] * 0.15], w);
+  }, pt);
+  const tap = async (pt, button = 0) => {
+    await aimAt(pt); await frames(2);
+    // One frame only: the headless renderer is slow enough that two frames can pass
+    // the long-press (erase) threshold.
+    await page.evaluate((b) => { window.__xr.buttons.right[b] = true; }, button); await frames(1);
+    await page.evaluate((b) => { window.__xr.buttons.right[b] = false; }, button); await frames(2);
+  };
+  await tap(A); await tap(B);
+  let dots = await page.evaluate(() => window.__landnav.tools.map.dots.map((d) => [d.x, d.z]));
+  assert.equal(dots.length, 2);
+  assert.ok(Math.hypot(dots[0][0] - A.x, dots[0][1] - A.z) < 1 && Math.hypot(dots[1][0] - B.x, dots[1][1] - B.z) < 1, JSON.stringify(dots));
+  await tap(A); await tap(B);
+  const m = await page.evaluate(() => { const map = window.__landnav.tools.map; return { lines: map.lines.length, meas: map.measure(map.lastLine) }; });
+  assert.equal(m.lines, 1);
+  assert.ok(Math.abs(m.meas.grid - 45) < 0.2, `line az ${m.meas.grid}`);
+  await tap(A, 5);
+  const prot = await page.evaluate(() => { const map = window.__landnav.tools.map; return { v: map.protractor.visible, p: map.protractor.position.toArray(), a: map.boardOf(map.dots[0]) }; });
+  assert.ok(prot.v && Math.hypot(prot.p[0] - prot.a.bx, prot.p[1] - prot.a.by) < 1e-6, 'protractor centred on A');
+  // Pencil is off while the compass is out.
+  await page.evaluate(() => { window.__xr.buttons.right[1] = true; });
+  await tap({ x: 1500, z: 1500 });
+  assert.equal(await page.evaluate(() => window.__landnav.tools.map.dots.length), 2);
+  await page.evaluate(() => { window.__xr.buttons.right[1] = false; });
+  // Long press on B erases it and its line.
+  await aimAt(B); await frames(2);
+  await page.evaluate(() => { window.__xr.buttons.right[0] = true; });
+  await page.waitForTimeout(900); await frames(2);
+  await page.evaluate(() => { window.__xr.buttons.right[0] = false; }); await frames(2);
+  const st = await page.evaluate(() => { const map = window.__landnav.tools.map; return { dots: map.dots.length, lines: map.lines.length }; });
+  assert.deepEqual(st, { dots: 1, lines: 0 });
+  await page.evaluate(() => { window.__xr.buttons.left[1] = false; window.__xr.pose = { left: {}, right: {} }; });
+  await frames(2);
+  assert.equal(await page.evaluate(() => window.__landnav.tools.map.group.visible), false);
 });
 
 await check('physical walking cannot leave the playable area', async () => {

@@ -12,7 +12,9 @@ import { Locomotion } from './locomotion.js';
 import { Footfalls } from './footfalls.js';
 import { createVignette } from './vignette.js';
 import { buildSettingsPanel, setupVRButton } from './ui.js';
-import { gridAzimuth } from './coords.js';
+import { gridAzimuth, gridToMagnetic } from './coords.js';
+import { Tools } from './tools.js';
+import { loadMapTexture } from './map.js';
 
 const params = new URLSearchParams(location.search);
 const siteId = params.get('site') || 'demo-synthetic';
@@ -75,23 +77,33 @@ camera.add(vignette.mesh);
 
 let fly = false;
 let terrain = null;
+let tools = null;
+let beacon = null;
 let boundaryWarning = '';
 
-// ---- Controllers: simple stand-ins at the grip pose ----
+// ---- Controllers: simple stand-ins at the grip pose, plus the pointing rays ----
 
 const debugPanel = debug ? createDebugPanel() : null;
+const hands = { left: {}, right: {} };
 for (let i = 0; i < 2; i++) {
   const grip = renderer.xr.getControllerGrip(i);
+  const ray = renderer.xr.getController(i);
   const body = new THREE.Mesh(
     new THREE.CylinderGeometry(0.018, 0.022, 0.11, 12).rotateX(Math.PI / 2),
     new THREE.MeshLambertMaterial({ color: 0x2b2e33 }),
   );
   grip.add(body);
-  grip.addEventListener('connected', (e) => {
-    grip.userData.handedness = e.data.handedness;
-    if (debugPanel && e.data.handedness === 'left') grip.add(debugPanel.mesh);
-  });
+  const onConnect = (e) => {
+    const hand = e.data.handedness;
+    if (hand !== 'left' && hand !== 'right') return;
+    grip.userData.handedness = hand;
+    hands[hand] = { grip, ray, body };
+    tools?.attach(hand, hands[hand]);
+    if (debugPanel && hand === 'left') grip.add(debugPanel.mesh);
+  };
+  grip.addEventListener('connected', onConnect);
   player.add(grip);
+  player.add(ray);
 }
 
 // ---- Desktop controls ----
@@ -110,9 +122,34 @@ input.on('togglePreset', () => {
   saveSettings(settings);
 });
 input.on('help', () => { help.hidden = !help.hidden; });
+input.on('map', () => {
+  if (!tools || renderer.xr.isPresenting) return;
+  const up = tools.toggleDesktopMap();
+  // The mouse becomes the pencil while the map is up.
+  input.lookEnabled = !up;
+  if (up && document.pointerLockElement) document.exitPointerLock();
+});
+input.on('compass', () => {
+  if (!tools || renderer.xr.isPresenting) return;
+  tools.toggleDesktopCompass();
+});
+renderer.domElement.addEventListener('mousemove', (e) => {
+  if (!tools?.desktopMap) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  tools.pointer = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+});
+renderer.domElement.addEventListener('mousedown', (e) => tools?.desktopClick(e.button));
+renderer.domElement.addEventListener('contextmenu', (e) => { if (tools?.desktopMap) e.preventDefault(); });
+renderer.domElement.addEventListener('wheel', (e) => {
+  if (!tools?.desktopCompass && !tools?.desktopMap) return;
+  e.preventDefault();
+  tools.desktopWheel(e.deltaY);
+}, { passive: false });
 addEventListener('keydown', (e) => {
   footfalls.unlock();
-  if (e.code === 'KeyP' && !(e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement)) togglePanel();
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
+  if (e.code === 'KeyP') togglePanel();
+  if (e.code === 'Delete' || e.code === 'Backspace') tools?.desktopErase();
 });
 renderer.domElement.addEventListener('click', () => footfalls.unlock());
 document.getElementById('settings-button').addEventListener('click', togglePanel);
@@ -165,6 +202,8 @@ function updateDesktop(dt) {
   const rx = -fz, rz = fx;
   const dirX = fx * axes.z + rx * axes.x;
   const dirZ = fz * axes.z + rz * axes.x;
+
+  tools?.updateDesktop(dt, input.pitch);
 
   if (fly) {
     const speed = settings.flySpeed * (input.isDown('fast') ? settings.flyFastMultiplier : 1);
@@ -220,8 +259,11 @@ function updateXR(dt) {
   // Stand on the ground under the head.
   player.position.y = terrain.heightAt(head.x, head.z);
 
+  // Tools. While the compass is in hand the right stick turns its bezel.
+  const compassHeld = tools ? tools.updateXR(dt, xrInput) : false;
+
   // Snap turn (off by default): rotate the rig about the head.
-  if (settings.snapTurn) {
+  if (settings.snapTurn && !compassHeld) {
     const sx = xrInput.stick('right').x;
     if (snapArmed && Math.abs(sx) > 0.7) {
       snapArmed = false;
@@ -252,6 +294,11 @@ async function enterVR() {
     // Face the way the desktop camera was facing; the headset supplies pitch.
     player.rotation.set(0, input.yaw, 0);
     fly = false;
+    if (tools) {
+      tools.desktopMap = tools.desktopCompass = false;
+      tools.mountDesktop();
+      input.lookEnabled = true;
+    }
     camera.position.set(0, 0, 0);
     camera.rotation.set(0, 0, 0);
     snapPlayerToGround();
@@ -277,6 +324,7 @@ function exitVR() {
   placeDesktopCamera();
   snapPlayerToGround();
   vignette.update(0, 1);
+  tools?.mountDesktop();
   vrButton.textContent = 'Enter VR';
 }
 
@@ -310,11 +358,46 @@ function updateHud(dt) {
     const heading = gridAzimuth(-Math.sin(input.yaw), -Math.cos(input.yaw));
     lines.push(`x ${p.x.toFixed(1)}  z ${p.z.toFixed(1)}  ground ${p.y.toFixed(1)}  grid az ${heading.toFixed(1)}`);
     lines.push(`walked ${loco.pace.distance.toFixed(1)} m  paces ${loco.pace.leftCount}  grade ${(loco.lastGrade * 100).toFixed(0)}%`);
+    const c = compassDebug();
+    if (c) lines.push(c);
   }
   if (boundaryWarning) lines.push(boundaryWarning);
-  if (!input.locked && !renderer.xr.isPresenting) lines.push('Click to look around. H for help, P for settings.');
+  if (!input.locked && !renderer.xr.isPresenting && !tools?.desktopMap) lines.push('Click to look around. M map, C compass, H help, P settings.');
   hud.textContent = lines.join('\n');
-  debugPanel?.update(loco, boundaryWarning);
+  debugPanel?.update(loco, boundaryWarning, compassDebug());
+}
+
+// Debug: what the dial says against the truth, and the true bearing to the test beacon.
+function compassDebug() {
+  if (!tools?.compass.group.visible) return '';
+  const c = tools.compass;
+  const fmt = (v) => (v === null || v === undefined ? '---' : v.toFixed(1));
+  let text = `dial ${fmt(c.dialReading)}  true ${fmt(c.heading.magnetic)}  tilt ${c.heading.tilt.toFixed(0)}${c.stuck ? ' STUCK' : ''}`;
+  if (beacon) {
+    const p = c.group.getWorldPosition(new THREE.Vector3());
+    const az = gridToMagnetic(gridAzimuth(beacon.x - p.x, beacon.z - p.z), tools.map.site.gm_angle_deg);
+    text += `  beacon ${fmt(az)}`;
+  }
+  return text;
+}
+
+// Debug: a tall striped pole at ?beacon=x,z to check compass readings against.
+function makeBeacon(x, z) {
+  const group = new THREE.Group();
+  group.name = 'beacon';
+  for (let i = 0; i < 10; i++) {
+    const seg = new THREE.Mesh(
+      new THREE.CylinderGeometry(0.25, 0.25, 2, 12),
+      new THREE.MeshLambertMaterial({ color: i % 2 ? 0xffffff : 0xd02020 }),
+    );
+    seg.position.y = 1 + i * 2;
+    group.add(seg);
+  }
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.8, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffd000 }));
+  ball.position.y = 20.8;
+  group.add(ball);
+  group.position.set(x, terrain.heightAt(x, z), z);
+  return group;
 }
 
 // Debug-only wrist readout in VR, so the pace acceptance test can be checked in the headset.
@@ -334,8 +417,8 @@ function createDebugPanel() {
   let last = '';
   return {
     mesh,
-    update(l, warn) {
-      const text = `${l.pace.distance.toFixed(1)} m  ${l.pace.leftCount} paces|${warn || `grade ${(l.lastGrade * 100).toFixed(0)}%`}`;
+    update(l, warn, compassLine) {
+      const text = `${l.pace.distance.toFixed(1)} m  ${l.pace.leftCount} paces|${compassLine || warn || `grade ${(l.lastGrade * 100).toFixed(0)}%`}`;
       if (text === last) return;
       last = text;
       const [a, b] = text.split('|');
@@ -345,8 +428,8 @@ function createDebugPanel() {
       ctx.font = 'bold 64px system-ui, sans-serif';
       ctx.fillText(a, 20, 80);
       ctx.fillStyle = '#ddd';
-      ctx.font = '44px system-ui, sans-serif';
-      ctx.fillText(b, 20, 155);
+      ctx.font = `${b.length > 22 ? 30 : 44}px system-ui, sans-serif`;
+      ctx.fillText(b, 20, 155, canvas.width - 30);
       tex.needsUpdate = true;
     },
   };
@@ -360,9 +443,19 @@ addEventListener('resize', () => {
 
 async function start() {
   setStatus(`Loading site "${siteId}" ...`);
-  const data = await loadSite(`sites/${encodeURIComponent(siteId)}`);
+  const base = `sites/${encodeURIComponent(siteId)}`;
+  const [data, mapTexture] = await Promise.all([loadSite(base), loadMapTexture(base)]);
   terrain = buildTerrain(renderer, data);
   scene.add(terrain.group);
+  tools = new Tools({ renderer, camera, site: data.site, mapTexture, settings });
+  for (const hand of ['left', 'right']) if (hands[hand].grip) tools.attach(hand, hands[hand]);
+  if (debug && params.get('beacon')) {
+    const [bx, bz] = params.get('beacon').split(',').map(Number);
+    if (Number.isFinite(bx) && Number.isFinite(bz)) {
+      beacon = { x: bx, z: bz };
+      scene.add(makeBeacon(bx, bz));
+    }
+  }
   document.title = `${data.site.name} | Land Nav`;
 
   // Start on the ground in the middle of the area, facing grid north.
@@ -389,7 +482,7 @@ async function start() {
   });
 
   // Exposed for automated checks and console poking. Not a gameplay API.
-  window.__landnav = { camera, player, terrain, site: data.site, renderer, scene, settings, loco, input };
+  window.__landnav = { camera, player, terrain, site: data.site, renderer, scene, settings, loco, input, tools, beacon };
 }
 
 start().catch((err) => {

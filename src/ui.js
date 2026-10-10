@@ -11,6 +11,9 @@ const FIELDS = [
   { key: 'hapticStrength', label: 'Left-foot haptic strength', type: 'range', min: 0, max: 1, step: 0.05 },
   { key: 'vignette', label: 'Comfort vignette', type: 'range', min: 0, max: 1, step: 0.05 },
   { key: 'snapTurn', label: 'Snap turn (right stick)', type: 'checkbox' },
+  { key: 'units', label: 'Compass lens units', type: 'select', options: [['deg', 'Degrees'], ['mils', 'Mils']], text: true },
+  { key: 'compassTiltSticks', label: 'Dial sticks when tilted', type: 'checkbox' },
+  { key: 'assisted', label: 'Assisted map readout', type: 'checkbox' },
 ];
 
 export function buildSettingsPanel(container, settings, onChange) {
@@ -45,6 +48,7 @@ export function buildSettingsPanel(container, settings, onChange) {
     input.addEventListener('change', () => {
       let v;
       if (f.type === 'checkbox') v = input.checked;
+      else if (f.text) v = input.value;
       else v = Number(input.value);
       if (f.type === 'number') {
         if (!Number.isFinite(v)) return;

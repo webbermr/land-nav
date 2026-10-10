@@ -6,6 +6,11 @@
   const state = {
     head: { x: 0, y: 1.6, z: 0, yaw: 0 },  // in the local-floor space; yaw radians, + turns left
     axes: { left: [0, 0, 0, 0], right: [0, 0, 0, 0] },
+    // Pressed state per xr-standard button index: 0 trigger, 1 grip, 4 A/X, 5 B/Y.
+    buttons: { left: [], right: [] },
+    // Optional pose overrides, column-major matrices in the local-floor space:
+    // pose.right.ray / pose.right.grip etc. Unset poses follow the head.
+    pose: { left: {}, right: {} },
     pulses: [],
     session: null,
   };
@@ -47,7 +52,6 @@
   WebGL2RenderingContext.prototype.makeXRCompatible = async () => {};
 
   function makeSource(hand) {
-    const buttons = Array.from({ length: 7 }, () => ({ pressed: false, touched: false, value: 0 }));
     return {
       handedness: hand,
       targetRaySpace: { hand, kind: 'ray' },
@@ -56,7 +60,12 @@
       gamepad: {
         mapping: 'xr-standard',
         get axes() { return state.axes[hand]; },
-        buttons,
+        get buttons() {
+          return Array.from({ length: 7 }, (_, i) => {
+            const pressed = !!state.buttons[hand][i];
+            return { pressed, touched: pressed, value: pressed ? 1 : 0 };
+          });
+        },
         hapticActuators: [{
           pulse(intensity, ms) {
             state.pulses.push({ hand, intensity, ms, t: performance.now() });
@@ -92,6 +101,8 @@
         };
       },
       getPose(space) {
+        const override = state.pose[space.hand]?.[space.kind];
+        if (override) return { transform: { matrix: override }, emulatedPosition: false };
         const h = state.head;
         const side = space.hand === 'left' ? -0.2 : 0.2;
         const x = h.x + Math.cos(h.yaw) * side - Math.sin(h.yaw) * 0.3;

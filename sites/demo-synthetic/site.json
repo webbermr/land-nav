@@ -1,0 +1,46 @@
+{
+  "id": "demo-synthetic",
+  "name": "Synthetic Demo",
+  "utm_zone": "18N",
+  "epsg": 32618,
+  "mgrs_gzd": "18S",
+  "mgrs_100km": "TJ",
+  "center_lat": 38.85,
+  "center_lon": -77.45,
+  "e_west": 286390,
+  "n_north": 4303980,
+  "size_m": 2000,
+  "spacing_m": 4,
+  "grid": 501,
+  "elev_min": 20.767669677734375,
+  "elev_max": 202.0605926513672,
+  "elev_ref": 20.767669677734375,
+  "skirt": {
+    "size_m": 6000,
+    "spacing_m": 30,
+    "grid": 201,
+    "e_west": 284400,
+    "n_north": 4305990,
+    "elev_min": 16.440017700195312,
+    "elev_max": 201.58221435546875
+  },
+  "declination_deg": -10.5,
+  "convergence_deg": -1.5376,
+  "gm_angle_deg": -8.9624,
+  "declination_date": "2026-10-01",
+  "contour_interval_m": 10,
+  "index_contour_interval_m": 50,
+  "map": {
+    "px": 4096,
+    "area": [
+      323,
+      110,
+      3773,
+      3560
+    ]
+  },
+  "sources": [
+    "synthetic.tif"
+  ],
+  "synthetic": true
+}

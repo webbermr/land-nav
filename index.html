@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Land Nav</title>
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #1b1f23; color: #eee;
+      font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    #app canvas { display: block; }
+    #hud { position: fixed; left: 12px; top: 10px; white-space: pre; pointer-events: none;
+      font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; text-shadow: 0 1px 2px #000; }
+    #status { position: fixed; inset: 0; display: grid; place-items: center; font-size: 18px;
+      background: #1b1f23; }
+    #status.error { color: #ff8a80; }
+    #status[hidden] { display: none; }
+    #help { position: fixed; right: 12px; top: 10px; background: rgba(20, 22, 26, 0.82);
+      padding: 10px 14px; border-radius: 6px; max-width: 320px; }
+    #help h2 { font-size: 14px; margin: 0 0 6px; }
+    #help table { border-collapse: collapse; }
+    #help td { padding: 1px 10px 1px 0; vertical-align: top; }
+    #help td:first-child { font-family: ui-monospace, Menlo, Consolas, monospace; color: #ffd27a; white-space: nowrap; }
+    #help[hidden] { display: none; }
+  </style>
+  <script type="importmap">
+    { "imports": { "three": "./vendor/three/three.module.js" } }
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="hud"></div>
+  <div id="help">
+    <h2>Desktop controls</h2>
+    <table>
+      <tr><td>Click</td><td>Capture mouse to look</td></tr>
+      <tr><td>W A S D</td><td>Move</td></tr>
+      <tr><td>Shift</td><td>Faster</td></tr>
+      <tr><td>V</td><td>Toggle fly / walk</td></tr>
+      <tr><td>R / F</td><td>Fly up / down</td></tr>
+      <tr><td>G</td><td>Woods / open preset</td></tr>
+      <tr><td>H</td><td>Hide this help</td></tr>
+    </table>
+  </div>
+  <div id="status">Loading ...</div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

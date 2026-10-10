@@ -104,7 +104,13 @@ await check('M2 desktop: compass reads the beacon within 1 degree of the compute
     input.pitch = -0.3;
   }, BEACON);
   await page.keyboard.press('KeyC');
-  await page.waitForTimeout(2500);
+  try {
+  // Wait for the dial to settle (frame time, which can be slow headless).
+  await page.waitForFunction(() => {
+    const c = window.__landnav.tools.compass;
+    return c.dialReading !== null && c.heading.magnetic !== null && Math.abs(c.damper.velocity) < 0.05
+      && window.__t.angleDiff(c.dialReading, c.heading.magnetic) < 0.05;
+  }, null, { timeout: 60000, polling: 100 });
   const r = await page.evaluate(({ x, z }) => {
     const { tools, player } = window.__landnav;
     return { dial: tools.compass.dialReading, expected: window.__t.magOf(x - player.position.x, z - player.position.z) };
@@ -116,14 +122,18 @@ await check('M2 desktop: compass reads the beacon within 1 degree of the compute
   await page.mouse.wheel(0, 100);
   await page.waitForTimeout(200);
   assert.equal(await page.evaluate(() => window.__landnav.tools.compass.bezelDeg), 3);
-  await page.keyboard.press('KeyC');
-  // Face grid north again; entering VR keeps the desktop heading.
-  await page.evaluate(() => { window.__landnav.input.pitch = 0; window.__landnav.input.yaw = 0; });
+  } finally {
+    // Always put the compass away and face grid north again, so a failure here
+    // doesn't cascade (entering VR keeps the desktop heading).
+    await page.keyboard.press('KeyC');
+    await page.evaluate(() => { window.__landnav.input.pitch = 0; window.__landnav.input.yaw = 0; });
+  }
 });
 
 await check('M2 desktop: map dots, line, protractor, erase and zoom', async () => {
   await page.keyboard.press('KeyM');
   await page.waitForTimeout(500);
+  try {
   const A = { x: 900, z: 1100 }, B = { x: 1300, z: 700 };
   const click = async (pt, button = 'left') => {
     const s = await page.evaluate(({ x, z }) => window.__t.screenOf(x, z), pt);
@@ -157,8 +167,10 @@ await check('M2 desktop: map dots, line, protractor, erase and zoom', async () =
   await page.keyboard.press('Delete');
   st = await page.evaluate(() => { const map = window.__landnav.tools.map; return { dots: map.dots.length, lines: map.lines.length }; });
   assert.deepEqual(st, { dots: 1, lines: 0 });
-  await page.keyboard.press('KeyM');
-  await page.evaluate(() => window.__landnav.tools.map.clear());
+  } finally {
+    if (await page.evaluate(() => window.__landnav.tools.desktopMap)) await page.keyboard.press('KeyM');
+    await page.evaluate(() => window.__landnav.tools.map.clear());
+  }
 });
 
 await check('Enter VR button is offered', async () => {

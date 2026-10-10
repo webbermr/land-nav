@@ -21,7 +21,7 @@ Options go in the query string: `?site=<id>` picks a site folder, `?debug` shows
 
 Desktop controls: click to capture the mouse, WASD to move, Shift for faster, V toggles fly and walk, R and F fly up and down, G switches between the woods and open presets, H hides the help panel.
 
-WebXR needs HTTPS, so testing on the headset means GitHub Pages or another HTTPS host.
+WebXR needs HTTPS, so the headset uses the GitHub Pages build: **https://webbermr.github.io/land-nav/**. Every push to `main` runs the tests and redeploys. Pushes to other branches and pull requests run the tests only. The workflow is `.github/workflows/pages.yml`, and it needs Settings → Pages → Source set to **GitHub Actions**, once.
 
 ## Build a site from USGS data
 

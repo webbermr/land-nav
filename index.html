@@ -15,7 +15,7 @@
     #status.error { color: #ff8a80; }
     #status[hidden] { display: none; }
     #help { position: fixed; right: 12px; top: 10px; background: rgba(20, 22, 26, 0.82);
-      padding: 10px 14px; border-radius: 6px; max-width: 320px; }
+      padding: 10px 14px; border-radius: 6px; max-width: 360px; max-height: calc(100vh - 110px); overflow: auto; }
     #help h2 { font-size: 14px; margin: 0 0 6px; }
     #help table { border-collapse: collapse; }
     #help td { padding: 1px 10px 1px 0; vertical-align: top; }
@@ -53,6 +53,12 @@
       <tr><td>R / F</td><td>Fly up / down</td></tr>
       <tr><td>Shift</td><td>Fly faster</td></tr>
       <tr><td>G</td><td>Woods / open preset</td></tr>
+      <tr><td>M</td><td>Map up / down</td></tr>
+      <tr><td>Click</td><td>Map: dot; click dot, then another: line</td></tr>
+      <tr><td>Right-click</td><td>Map: protractor on a dot</td></tr>
+      <tr><td>Delete</td><td>Map: erase the dot under the cursor</td></tr>
+      <tr><td>C</td><td>Compass up / down</td></tr>
+      <tr><td>Wheel</td><td>Compass: turn the bezel. Map: zoom</td></tr>
       <tr><td>P</td><td>Settings (pace count)</td></tr>
       <tr><td>H</td><td>Hide this help</td></tr>
     </table>
@@ -60,7 +66,11 @@
     <table>
       <tr><td>Left stick</td><td>Walk where you look</td></tr>
       <tr><td>Left pulse</td><td>Left foot landed: count it</td></tr>
-      <tr><td>Right stick</td><td>Snap turn, if enabled</td></tr>
+      <tr><td>Left grip</td><td>Hold the map</td></tr>
+      <tr><td>Right grip</td><td>Hold the compass</td></tr>
+      <tr><td>Right stick</td><td>Compass: bezel. Otherwise snap turn, if enabled</td></tr>
+      <tr><td>Right trigger</td><td>Map: dot / select / line. Hold on a dot: erase</td></tr>
+      <tr><td>B</td><td>Map: protractor on a dot</td></tr>
     </table>
   </div>
   <div id="settings" hidden></div>

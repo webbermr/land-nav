@@ -34,6 +34,18 @@ export const DEFAULTS = Object.freeze({
   assisted: false,
   compassTiltLimit: 15,       // degrees; dial sticks beyond this
   compassTiltSticks: true,
+  bezelRepeatSec: 0.18,       // hold the stick to keep clicking the bezel
+
+  // Where the tools sit in the hands, metres and degrees. Tune on the headset.
+  // Compass: in the right controller's pointing (target-ray) space, so its sighting
+  // axis is where you point. Map: in the left controller's grip space.
+  compassOffsetY: 0.03,
+  compassOffsetZ: -0.07,
+  mapOffsetY: 0.13,
+  mapOffsetZ: -0.1,
+  mapTiltDeg: 50,             // board tipped back toward you
+  pencilRayLength: 0.6,
+  eraseHoldSec: 0.6,          // hold the trigger on a dot this long to erase it
 
   // Desktop
   mouseSensitivity: 0.0022,   // rad per pixel

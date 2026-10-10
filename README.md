@@ -8,7 +8,9 @@ A WebXR land navigation trainer for the Meta Quest 3 browser. You stand on real 
 
 **M1 (walk in VR): built, awaiting a headset check.** Enter VR from the page, stand on the terrain at your real height, and walk with the left stick in the direction you're looking. Each footfall plays a footstep. Left footfalls are louder and pulse the left controller: that pulse is what you count. Your pace count (default 65 per 100 m), time compression and the slope effects are in Settings.
 
-Compass, map tools, courses and the AAR come in M2 onward.
+**M2 (compass and map): built, awaiting a headset check.** Hold the right grip for a lensatic compass and the left grip for the map board. The compass dial floats and swings toward magnetic north. Red degrees are inside, black mils outside, and the lens at the back shows the graduations under the index. The bezel clicks in 3° steps, and the dial sticks if you tilt it more than 15°. On the map, the right controller's short ray is a pencil: dots, lines between dots, and a protractor centred on a dot and aligned to grid north. Assisted mode (off by default) shows grid azimuth, magnetic azimuth and distance for the last line. The map never shows where you are.
+
+Courses, beads, the score card and the AAR come in M3 onward.
 
 The bundled site, `demo-synthetic`, is procedural terrain placed at a real UTM location for testing. It is not a real place, and its map says so. Swap in a real site once one is picked (spec section 1).
 
@@ -26,10 +28,19 @@ Options go in the query string:
 - `?site=<id>` picks a site folder.
 - `?debug` shows your true position, distance walked and paces counted, on the desktop HUD and on a small panel on the left controller in VR. Use it to check your count against the truth. Debug is for development only; the app never shows position or pace count during a run.
 - `?debug&start=x,z` starts at a scene position, in metres from the NW corner.
+- `?debug&beacon=x,z` puts a tall striped test pole at a scene position. With the compass out, the debug readout shows the dial, the true magnetic azimuth and the true bearing to the beacon.
 
 Desktop: click to capture the mouse, WASD to walk (listen for the footsteps), V toggles walk and fly, R and F fly up and down, Shift flies faster, G switches between the woods and open presets, P opens Settings, H hides the help panel.
 
+Desktop tools: C brings out the compass, sighted along your view; the wheel turns its bezel. M brings up the map, and the mouse becomes the pencil. Click to place a dot. Click one dot, then another, to draw a line. Right-click a dot for the protractor. Delete erases the dot under the cursor. The wheel zooms toward the cursor.
+
 Quest: press **Enter VR**. Left stick walks where you're looking. Turn by physically turning; snap turn on the right stick is off by default and lives in Settings. A dark vignette closes in while you move, adjustable in Settings.
+
+Quest tools: hold the **right grip** for the compass. It sights along where the controller points, and the right stick turns the bezel. Hold the **left grip** for the map. With the compass put away, aim the right controller at the map. **Trigger** places a dot. Trigger one dot, then another, to draw a line. Hold the trigger on a dot to erase it. **B** on a dot centres the protractor there.
+
+### Checking the M2 compass acceptance on the headset
+
+Open `https://webbermr.github.io/land-nav/?debug&beacon=1150,880`, enter VR facing north-east, hold the right grip and sight the striped pole through the compass. The panel on your left controller shows the dial reading next to the true bearing to the beacon. They should agree within 1°.
 
 ### Checking the M1 pace acceptance on the headset
 
@@ -85,6 +96,11 @@ src/locomotion.js     speed, Tobler slope factor, stride, footfall cadence (pure
 src/footfalls.js      footstep sounds and the left-hand haptic pulse
 src/input.js          desktop keys and mouse, Quest controllers
 src/vignette.js       comfort vignette
+src/compass.js        lensatic compass model, floating dial, bezel, lens
+src/compass-math.js   heading, tilt and dial damping (pure, tested)
+src/map.js            map board, pencil dots and lines, protractor
+src/map-math.js       scene <-> map pixel <-> board conversions (pure, tested)
+src/tools.js          holding the tools, pencil ray, desktop map and compass
 src/ui.js             Enter VR button, settings panel
 src/settings.js       every tunable number, persisted when storage allows
 src/main.js           renderer, player rig, desktop and VR loops
@@ -99,4 +115,7 @@ vendor/three/         three.js r186, unmodified
 - **site.json** carries a few extra fields beyond the spec's example: the skirt's own origin and elevation range, the map's pixel layout (`map.area` is the terrain square inside `map.png`), EPSG code, center lat/lon and source file names.
 - **Desktop fly keys** are R and F because the spec reserves E for punching a stake.
 - **Pace distance is horizontal.** Footfalls come from horizontal distance covered, shortened on slopes by the stride factor (spec section 6). Physically walking around your room moves you but doesn't fire footfalls; only the stick does.
-- **Settings in VR:** for now, set them on the page before entering VR. The in-headset menu comes with the tools in M2.
+- **Settings in VR:** for now, set them on the page before entering VR. An in-headset menu (the Menu button) is still to come.
+- **Paper strip:** the movable paper strip for measuring distance (spec 7.2) isn't built yet. Use the printed scale bar for now. Planned with courses in M3, where distance measuring starts to matter.
+- **The compass rides the right controller's pointing ray,** not its grip, so the sighting axis is wherever you point. Where the compass and map sit in your hands (`compassOffset*`, `mapOffset*`, `mapTiltDeg` in `settings.js`) is a first guess that needs tuning on the headset.
+- **Map line weights** were thickened (minor contours 2.4 px, index 5 px at 4096) so they survive minification in the headset. Regenerate other sites to pick this up.

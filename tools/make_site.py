@@ -230,9 +230,9 @@ def render_map(path, heights_abs, site, layout, contour_interval, index_interval
     major = levels[is_index]
 
     if len(minor):
-        ax.contour(xs, zs, heights_abs, levels=minor, colors=brown, linewidths=1.6 * s, zorder=2)
+        ax.contour(xs, zs, heights_abs, levels=minor, colors=brown, linewidths=2.4 * s, zorder=2)
     if len(major):
-        cs = ax.contour(xs, zs, heights_abs, levels=major, colors=brown, linewidths=4.0 * s, zorder=3)
+        cs = ax.contour(xs, zs, heights_abs, levels=major, colors=brown, linewidths=5.0 * s, zorder=3)
         labels = ax.clabel(cs, fmt="%d", fontsize=26 * s, inline=True, inline_spacing=14 * s)
         for t in labels:
             t.set_color(brown)

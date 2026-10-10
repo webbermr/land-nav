@@ -15,6 +15,10 @@ export const DEFAULTS = Object.freeze({
   strideDownhill: 0.4,
   strideMin: 0.6,
   eyeHeight: 1.7,             // m, desktop walk mode (VR uses the headset's real height)
+  footfallVolume: 0.8,        // 0..1
+  hapticStrength: 0.8,        // 0..1, left controller pulse per left footfall
+  hapticMs: 45,
+  stickDeadzone: 0.15,
   snapTurn: false,
   snapTurnDeg: 30,
   vignette: 0.5,
@@ -78,8 +82,4 @@ export function saveSettings(settings) {
   } catch {
     return false;
   }
-}
-
-export function paceLength(settings) {
-  return 100 / settings.paceCountPer100m;
 }

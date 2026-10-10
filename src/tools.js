@@ -105,7 +105,19 @@ export class Tools {
     this.map.hover(local);
   }
 
+  // Raycast the pointer now, rather than trusting the last frame's hover: the mouse
+  // can move and click between frames.
+  refreshDesktopHover() {
+    if (!this.pencilReady || !this.pointer) return;
+    this.camera.updateMatrixWorld(true);
+    this.map.group.updateMatrixWorld(true);
+    this.raycaster.far = Infinity;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+    this.setHover(this.map.hitTest(this.raycaster));
+  }
+
   desktopClick(button) {
+    this.refreshDesktopHover();
     if (!this.pencilReady || !this.hovered) return null;
     if (button === 0) return this.map.trigger(this.hovered);
     if (button === 2) return this.map.toggleProtractor(this.hovered);
@@ -113,6 +125,7 @@ export class Tools {
   }
 
   desktopErase() {
+    this.refreshDesktopHover();
     return this.pencilReady && this.hovered ? this.map.erase(this.hovered) : false;
   }
 
@@ -149,10 +162,7 @@ export class Tools {
       this.compass.update(dt);
     }
     if (this.pencilReady && this.pointer) {
-      this.map.group.updateMatrixWorld(true);
-      this.raycaster.far = Infinity;
-      this.raycaster.setFromCamera(this.pointer, this.camera);
-      this.setHover(this.map.hitTest(this.raycaster));
+      this.refreshDesktopHover();
     } else if (this.hovered) {
       this.setHover(null);
     }

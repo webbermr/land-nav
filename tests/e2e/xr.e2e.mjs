@@ -1,6 +1,7 @@
 // Browser check of the VR path with a fake headset (tests/e2e/xr-mock.js).
 //   python3 -m http.server 8080 &
 //   node tests/e2e/xr.e2e.mjs [http://localhost:8080/] [screenshot-dir]
+// Set E2E_CPU_THROTTLE=4 to simulate a slow machine.
 // Needs Playwright with a Chromium build. Not part of `npm test`.
 import { createRequire } from 'node:module';
 import { execSync } from 'node:child_process';
@@ -21,6 +22,11 @@ const browser = await playwright.chromium.launch({
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
 });
 const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
+// E2E_CPU_THROTTLE=4 slows the page's CPU, to reproduce timing bugs seen on slow CI runners.
+if (process.env.E2E_CPU_THROTTLE) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Emulation.setCPUThrottlingRate', { rate: Number(process.env.E2E_CPU_THROTTLE) });
+}
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
@@ -309,7 +315,7 @@ await check('M2 VR: right stick clicks the bezel while the compass is held (and 
 });
 
 await check('M2 VR: map in the left hand; pencil dots, line, protractor, long-press erase', async () => {
-  await page.evaluate(() => { window.__xr.buttons.left[1] = true; });
+  await page.evaluate(() => { window.__landnav.tools.map.clear(); window.__xr.buttons.left[1] = true; });
   await frames(3);
   assert.ok(await page.evaluate(() => window.__landnav.tools.map.group.visible), 'map shown');
   const A = { x: 700, z: 1300 }, B = { x: 1100, z: 900 };
@@ -342,11 +348,14 @@ await check('M2 VR: map in the left hand; pencil dots, line, protractor, long-pr
   await page.evaluate(() => { window.__xr.buttons.right[1] = false; });
   // Long press on B erases it and its line.
   await aimAt(B); await frames(2);
+  // Hold until the app erases (frame time can be slower than wall time headless), then
+  // check it did so while the trigger was still down.
   await page.evaluate(() => { window.__xr.buttons.right[0] = true; });
-  await page.waitForTimeout(900); await frames(2);
+  await frames(1);
+  await page.waitForFunction(() => window.__landnav.tools.map.dots.length === 1, null, { timeout: 30000, polling: 50 });
   await page.evaluate(() => { window.__xr.buttons.right[0] = false; }); await frames(2);
   const st = await page.evaluate(() => { const map = window.__landnav.tools.map; return { dots: map.dots.length, lines: map.lines.length }; });
-  assert.deepEqual(st, { dots: 1, lines: 0 });
+  assert.deepEqual(st, { dots: 1, lines: 0 }, `after long press: ${JSON.stringify(st)}`);
   await page.evaluate(() => { window.__xr.buttons.left[1] = false; window.__xr.pose = { left: {}, right: {} }; });
   await frames(2);
   assert.equal(await page.evaluate(() => window.__landnav.tools.map.group.visible), false);

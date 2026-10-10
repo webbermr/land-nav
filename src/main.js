@@ -133,12 +133,16 @@ input.on('compass', () => {
   if (!tools || renderer.xr.isPresenting) return;
   tools.toggleDesktopCompass();
 });
-renderer.domElement.addEventListener('mousemove', (e) => {
+function setPointer(e) {
   if (!tools?.desktopMap) return;
   const r = renderer.domElement.getBoundingClientRect();
   tools.pointer = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+}
+renderer.domElement.addEventListener('mousemove', setPointer);
+renderer.domElement.addEventListener('mousedown', (e) => {
+  setPointer(e);
+  tools?.desktopClick(e.button);
 });
-renderer.domElement.addEventListener('mousedown', (e) => tools?.desktopClick(e.button));
 renderer.domElement.addEventListener('contextmenu', (e) => { if (tools?.desktopMap) e.preventDefault(); });
 renderer.domElement.addEventListener('wheel', (e) => {
   if (!tools?.desktopCompass && !tools?.desktopMap) return;

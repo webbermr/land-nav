@@ -1,0 +1,10 @@
+{
+  "name": "land-nav-vr",
+  "private": true,
+  "type": "module",
+  "description": "WebXR land navigation trainer on real USGS terrain. No build step.",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "serve": "python3 -m http.server 8080"
+  }
+}

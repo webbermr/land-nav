@@ -21,6 +21,21 @@
     #help td { padding: 1px 10px 1px 0; vertical-align: top; }
     #help td:first-child { font-family: ui-monospace, Menlo, Consolas, monospace; color: #ffd27a; white-space: nowrap; }
     #help[hidden] { display: none; }
+    #vr { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 14px 28px;
+      font: 600 18px system-ui, sans-serif; border: 0; border-radius: 8px; background: #ffd27a; color: #1b1f23;
+      cursor: pointer; }
+    #vr:disabled { background: #555; color: #ccc; cursor: default; font-weight: 400; font-size: 14px; }
+    #settings-button { position: fixed; right: 12px; bottom: 24px; padding: 10px 14px; border: 0;
+      border-radius: 6px; background: rgba(20, 22, 26, 0.82); color: #eee; font: 14px system-ui, sans-serif;
+      cursor: pointer; }
+    #settings { position: fixed; right: 12px; bottom: 72px; width: 300px; background: rgba(20, 22, 26, 0.92);
+      padding: 12px 16px; border-radius: 8px; }
+    #settings[hidden] { display: none; }
+    #settings h2 { font-size: 15px; margin: 0 0 8px; }
+    #settings .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 6px 0; }
+    #settings input[type=number] { width: 64px; }
+    #settings input[type=range] { width: 120px; }
+    #settings .note { color: #aaa; font-size: 12px; margin: 10px 0 0; }
   </style>
   <script type="importmap">
     { "imports": { "three": "./vendor/three/three.module.js" } }
@@ -33,14 +48,24 @@
     <h2>Desktop controls</h2>
     <table>
       <tr><td>Click</td><td>Capture mouse to look</td></tr>
-      <tr><td>W A S D</td><td>Move</td></tr>
-      <tr><td>Shift</td><td>Faster</td></tr>
-      <tr><td>V</td><td>Toggle fly / walk</td></tr>
+      <tr><td>W A S D</td><td>Walk (listen for footsteps)</td></tr>
+      <tr><td>V</td><td>Toggle walk / fly</td></tr>
       <tr><td>R / F</td><td>Fly up / down</td></tr>
+      <tr><td>Shift</td><td>Fly faster</td></tr>
       <tr><td>G</td><td>Woods / open preset</td></tr>
+      <tr><td>P</td><td>Settings (pace count)</td></tr>
       <tr><td>H</td><td>Hide this help</td></tr>
     </table>
+    <h2 style="margin-top:10px">Quest controllers</h2>
+    <table>
+      <tr><td>Left stick</td><td>Walk where you look</td></tr>
+      <tr><td>Left pulse</td><td>Left foot landed: count it</td></tr>
+      <tr><td>Right stick</td><td>Snap turn, if enabled</td></tr>
+    </table>
   </div>
+  <div id="settings" hidden></div>
+  <button id="settings-button" type="button">Settings</button>
+  <button id="vr" type="button" disabled>Checking for VR ...</button>
   <div id="status">Loading ...</div>
   <script type="module" src="./src/main.js"></script>
 </body>

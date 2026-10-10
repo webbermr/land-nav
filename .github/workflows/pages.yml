@@ -33,8 +33,25 @@ jobs:
       - run: pip install -r tools/requirements.txt
       - run: python -m unittest discover -s tests -p 'test_*.py' -v
 
+  browser:
+    # Loads the app in headless Chromium with a fake headset (tests/e2e/xr-mock.js)
+    # and exercises desktop walking and the VR path.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - run: npm install --no-save playwright@1.56.1
+      - run: npx playwright install --with-deps chromium
+      - name: Serve and run
+        run: |
+          python3 -m http.server 8080 >/dev/null 2>&1 &
+          sleep 1
+          node tests/e2e/xr.e2e.mjs http://localhost:8080/
+
   deploy:
-    needs: test
+    needs: [test, browser]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:

@@ -167,7 +167,15 @@ await check('M2 desktop: map dots, line, protractor, erase and zoom', async () =
   await page.keyboard.press('Delete');
   st = await page.evaluate(() => { const map = window.__landnav.tools.map; return { dots: map.dots.length, lines: map.lines.length }; });
   assert.deepEqual(st, { dots: 1, lines: 0 });
+  // With the compass out too, the desktop pencil still works, and every click says what it did.
+  await page.keyboard.press('KeyC');
+  await page.waitForTimeout(300);
+  await click({ x: 1500, z: 1500 });
+  assert.equal(await page.evaluate(() => window.__landnav.tools.map.dots.length), 2, 'dot placed with the compass out');
+  assert.match(await page.textContent('#hud'), /Dot placed/);
+  await page.keyboard.press('KeyC');
   } finally {
+    if (await page.evaluate(() => window.__landnav.tools.desktopCompass)) await page.keyboard.press('KeyC');
     if (await page.evaluate(() => window.__landnav.tools.desktopMap)) await page.keyboard.press('KeyM');
     await page.evaluate(() => window.__landnav.tools.map.clear());
   }

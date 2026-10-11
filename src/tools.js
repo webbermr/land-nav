@@ -95,9 +95,10 @@ export class Tools {
     return this.desktopCompass;
   }
 
-  // Pencil works only with the compass put away (spec 7.2).
+  // In VR the pencil works only with the compass put away: the right hand holds one
+  // or the other (spec 7.2). On desktop the mouse is free, so it always works.
   get pencilReady() {
-    return this.map.group.visible && !this.compass.group.visible;
+    return this.map.group.visible && (this.desktopMap || !this.compass.group.visible);
   }
 
   setHover(local) {
@@ -116,11 +117,21 @@ export class Tools {
     this.setHover(this.map.hitTest(this.raycaster));
   }
 
+  // Returns what happened, so the page can say so:
+  // 'dot' | 'select' | 'deselect' | 'line' | 'outside' | 'miss'
+  // | 'protractor' | 'protractor-off' | 'protractor-miss' | null
   desktopClick(button) {
     this.refreshDesktopHover();
-    if (!this.pencilReady || !this.hovered) return null;
-    if (button === 0) return this.map.trigger(this.hovered);
-    if (button === 2) return this.map.toggleProtractor(this.hovered);
+    if (!this.pencilReady) return null;
+    if (!this.hovered) return 'miss';
+    if (button === 0) return this.map.trigger(this.hovered) ?? 'outside';
+    if (button === 2) {
+      if (!this.map.dotAt(this.hovered)) {
+        this.map.toggleProtractor(null);
+        return 'protractor-miss';
+      }
+      return this.map.toggleProtractor(this.hovered) ? 'protractor' : 'protractor-off';
+    }
     return null;
   }
 

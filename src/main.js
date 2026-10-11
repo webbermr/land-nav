@@ -139,9 +139,29 @@ function setPointer(e) {
   tools.pointer = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
 }
 renderer.domElement.addEventListener('mousemove', setPointer);
+// What each map click did, in words, so a click is never silent.
+const CLICK_MESSAGES = {
+  dot: 'Dot placed. Click a dot, then another, to draw a line between them.',
+  select: 'Dot selected. Now click another dot to draw a line from this one.',
+  deselect: 'Dot deselected.',
+  line: 'Line drawn.',
+  outside: 'Dots go inside the grid area of the map.',
+  miss: 'Click on the map.',
+  protractor: 'Protractor centred on the dot, aligned to grid north. Right-click the dot again to remove it.',
+  'protractor-off': 'Protractor removed.',
+  'protractor-miss': 'Right-click on a dot to centre the protractor there.',
+};
+let toast = null;
+function showToast(text) {
+  toast = text ? { text, until: performance.now() + 3500 } : null;
+}
+
 renderer.domElement.addEventListener('mousedown', (e) => {
   setPointer(e);
-  tools?.desktopClick(e.button);
+  // Ctrl-click is a right-click on a Mac trackpad.
+  const button = e.button === 0 && e.ctrlKey ? 2 : e.button;
+  const result = tools?.desktopClick(button);
+  if (result) showToast(CLICK_MESSAGES[result]);
 });
 renderer.domElement.addEventListener('contextmenu', (e) => { if (tools?.desktopMap) e.preventDefault(); });
 renderer.domElement.addEventListener('wheel', (e) => {
@@ -153,7 +173,9 @@ addEventListener('keydown', (e) => {
   footfalls.unlock();
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (e.code === 'KeyP') togglePanel();
-  if (e.code === 'Delete' || e.code === 'Backspace') tools?.desktopErase();
+  if ((e.code === 'Delete' || e.code === 'Backspace') && tools?.desktopMap) {
+    showToast(tools.desktopErase() ? 'Dot erased.' : 'Point at a dot, then press Delete to erase it.');
+  }
 });
 renderer.domElement.addEventListener('click', () => footfalls.unlock());
 document.getElementById('settings-button').addEventListener('click', togglePanel);
@@ -367,6 +389,10 @@ function updateHud(dt) {
   }
   if (boundaryWarning) lines.push(boundaryWarning);
   if (!input.locked && !renderer.xr.isPresenting && !tools?.desktopMap) lines.push('Click to look around. M map, C compass, H help, P settings.');
+  if (tools?.desktopMap && !renderer.xr.isPresenting) {
+    lines.push('Map: click for a dot, click two dots for a line, right-click a dot for the protractor, wheel to zoom, M to put away.');
+  }
+  if (toast && performance.now() < toast.until) lines.push(`> ${toast.text}`);
   hud.textContent = lines.join('\n');
   debugPanel?.update(loco, boundaryWarning, compassDebug());
 }

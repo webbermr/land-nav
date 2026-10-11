@@ -121,8 +121,10 @@ function addPatch(area, field, style, pos, col, nor) {
 }
 
 // A plain one-storey building: walls and a flat roof, sunk to the lowest corner so
-// it never floats on a slope.
-function buildingMesh(area, field, wallMat, roofMat) {
+// it never floats on a slope. Its triangles are appended to `roofs` and `walls`
+// ({ pos: [], nor: [] }), so every building on a site draws in two calls: a town
+// has thousands of buildings, and one draw each would swamp a headset.
+function addBuilding(area, field, roofs, walls) {
   const size = field.size;
   const ys = area.pts.map(([x, z]) => field.heightAt(Math.min(size, Math.max(0, x)), Math.min(size, Math.max(0, z))));
   const base = Math.min(...ys) - 0.3;
@@ -132,8 +134,25 @@ function buildingMesh(area, field, wallMat, roofMat) {
   const geo = new THREE.ExtrudeGeometry(shape, { depth: top - base, bevelEnabled: false });
   geo.rotateX(-Math.PI / 2);
   geo.translate(0, base, 0);
-  const mesh = new THREE.Mesh(geo, [roofMat, wallMat]);
-  mesh.name = area.name || 'building';
+  // ExtrudeGeometry is non-indexed, group 0 the caps (roof and floor), group 1 the sides.
+  const p = geo.attributes.position.array, n = geo.attributes.normal.array;
+  for (const g of geo.groups) {
+    const out = g.materialIndex === 0 ? roofs : walls;
+    for (let i = g.start * 3; i < (g.start + g.count) * 3; i++) {
+      out.pos.push(p[i]);
+      out.nor.push(n[i]);
+    }
+  }
+  geo.dispose();
+}
+
+function mergedMesh({ pos, nor }, material, name) {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  geo.computeBoundingSphere();
+  const mesh = new THREE.Mesh(geo, material);
+  mesh.name = name;
   return mesh;
 }
 
@@ -177,6 +196,8 @@ export function buildFeatures(features, field) {
 
   const wallMat = new THREE.MeshLambertMaterial({ color: 0x8c7b63 });
   const roofMat = new THREE.MeshLambertMaterial({ color: 0x4a4740 });
-  for (const a of features.areas) if (a.kind === 'building') group.add(buildingMesh(a, field, wallMat, roofMat));
+  const roofs = { pos: [], nor: [] }, walls = { pos: [], nor: [] };
+  for (const a of features.areas) if (a.kind === 'building') addBuilding(a, field, roofs, walls);
+  if (walls.pos.length) group.add(mergedMesh(roofs, roofMat, 'roofs'), mergedMesh(walls, wallMat, 'walls'));
   return group;
 }

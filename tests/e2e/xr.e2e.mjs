@@ -32,7 +32,7 @@ page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 await page.addInitScript(mock);
 const BEACON = { x: 1150, z: 880 };
-await page.goto(`${base}?site=demo-synthetic&debug&beacon=${BEACON.x},${BEACON.z}`, { waitUntil: 'load' });
+await page.goto(`${base}?site=demo-synthetic&time=12:00&debug&beacon=${BEACON.x},${BEACON.z}`, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__landnav?.tools, null, { timeout: 60000 });
 await page.evaluate(() => { document.getElementById('help').hidden = true; });
 // Walking checks measure exact distances, so trees mustn't get in the way. The
@@ -524,6 +524,41 @@ await check('Explore (desktop): Q teleports to the ground mid-screen; not during
     }, home);
     if (await page.evaluate(() => !document.getElementById('review').hidden)) await page.keyboard.press('Escape');
   }
+});
+
+await check('Sun and clock: noon sun casts shadows; 23:00 is dark with night rules and stars; a course keeps its own time', async () => {
+  const state = async () => (await page.waitForTimeout(300), page.evaluate(() => {
+    const l = window.__landnav;
+    return {
+      elev: l.env.elevation, dark: l.env.dark, cast: l.env.sun.castShadow, mapOn: l.renderer.shadowMap.enabled,
+      far: l.scene.fog.far, lamp: l.headlamp.intensity, stars: l.scene.getObjectByName('stars').visible,
+      treesCast: l.vegetation.trees.oak.crown.castShadow, groundTakes: l.terrain.group.children[0].receiveShadow,
+      hud: document.getElementById('hud').textContent,
+    };
+  }));
+  // Back in Explore: no course running.
+  await page.evaluate(() => { const l = window.__landnav; if (l.run && l.run.state !== 'ended') l.run.end(l.run.course.start); l.hideReview(); l.applyPreset(); });
+  let s = await state();
+  assert.ok(s.elev > 15 && !s.dark && s.cast && s.mapOn && !s.stars && s.treesCast && s.groundTakes, JSON.stringify(s));
+  assert.match(s.hud, /12:00/);
+  await page.evaluate(() => { const l = window.__landnav; l.settings.timeOfDay = 23 * 60; l.applyPreset(); });
+  s = await state();
+  assert.ok(s.elev < -10 && s.dark && !s.cast && s.stars && s.lamp > 0 && s.far === 60, JSON.stringify(s));
+  assert.match(s.hud, /23:00 {2}NIGHT/);
+  // A day course runs mid-morning whatever the clock says, and the clock comes back after.
+  await page.evaluate(async () => {
+    const l = window.__landnav;
+    await l.startCourse(await (await fetch('sites/demo-synthetic/courses/day-1.json')).json());
+  });
+  s = await state();
+  assert.ok(!s.dark && s.elev > 10 && s.cast, `course: ${JSON.stringify(s)}`);
+  await page.evaluate(() => { const l = window.__landnav; l.run.end(l.run.course.start); l.hideReview(); l.settings.timeOfDay = 12 * 60; l.applyPreset(); });
+  s = await state();
+  assert.ok(!s.dark && s.cast, JSON.stringify(s));
+  // Nature sounds start once the page has had a key press (browsers need a gesture).
+  await page.keyboard.press('KeyH');
+  await page.keyboard.press('KeyH');
+  await page.waitForFunction(() => window.__landnav.soundscape.ctx, null, { timeout: 5000 });
 });
 
 await check('Enter VR button is offered', async () => {

@@ -328,9 +328,26 @@ export class Vegetation {
   // At night the leaves lose their scattered-light glow, and the flat far-tree
   // cut-outs (unlit) go to silhouettes.
   setNight(on) {
+    this.nightOn = on;
     this.leaves.emissive.setHex(on ? 0x000000 : 0x0e1609);
     for (const m of Object.values(this.cutouts)) m.material.color.setHex(on ? 0x0a0c10 : 0xc8c8c8);
     this.last = null;
+  }
+
+  // Near trees, logs and rocks cast shadows; far cut-outs and shrubs don't (too
+  // many, too far, too small to matter).
+  castShadows() {
+    for (const t of Object.values(this.trees)) t.trunk.castShadow = t.crown.castShadow = true;
+    this.clutter.log.castShadow = this.clutter.rock.castShadow = true;
+  }
+
+  // Daylight 0..1 (dusk, overcast): the unlit far cut-outs and the leaves' glow
+  // follow it, so far trees don't stay noon-bright at sunset.
+  setLight(k) {
+    if (this.nightOn) return;
+    const v = Math.round(0x0a + (0xc8 - 0x0a) * Math.max(0, Math.min(1, k)));
+    for (const m of Object.values(this.cutouts)) m.material.color.setRGB(v / 255, v / 255, v / 255, THREE.SRGBColorSpace);
+    this.leaves.emissive.setHex(0x0e1609).multiplyScalar(Math.max(0, Math.min(1, k)));
   }
 
   // Instances drawn, for the HUD and tests.

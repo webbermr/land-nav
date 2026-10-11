@@ -28,6 +28,12 @@ Below that come the result, total time, distance against ideal, how long the map
 
 **Turning with the right stick (VR):** **snap** by default (a flick turns 30°), **smooth** (hold to turn, 90°/s, with the comfort vignette) or **off**. Set it in the X menu or Settings, along with the snap angle (15, 30 or 45°) and the smooth speed (45, 90 or 135°/s). While you hold the compass, the stick turns its bezel instead.
 
+**Sun, time of day and sound.** The sun is where it really is over the site, for the real date and time: it rises in the east, sets in the west, and the sky runs from noon blue through a warm sunset and blue dusk to a dark, starry night. Times are the site's local clock (the UTC offset is guessed from the longitude, with US daylight saving). Pick another hour from **Time of day** in the X menu or Settings, or put `?time=HH:MM` in the address; it goes back to the real time on reload. Once the sun is 5° below the horizon the night rules below switch on by themselves: you need the headlamp to read the map, and the woods close in as it gets darker. **N** jumps to night, or back to day (noon, if it's dark out). A course keeps its own time: 10:30 for a day course, 22:00 at night.
+
+The sun casts shadows from trees, rocks, logs and buildings within about 45 m of you (**Shadows**, X menu or Settings; switch them off first if the frame rate drops). The stars are a random field, not real constellations, but they turn about the pole star as the night goes on.
+
+You hear the place: wind that gusts and grows louder up high or in the open, leaves moving where there are trees, birds by day (most at dawn, few in winter), crickets on warm nights and the odd owl, and running water near streams. Birds, crickets and water are placed around you, so in the headset you can turn toward them. Footsteps sound like what you're walking on: road and parking click, gravel tracks crunch, trails thud, leaf litter crackles, grass is soft. It's all made on the fly in the browser, with no recordings to download. **Nature sounds** in the X menu or Settings sets the volume.
+
 **M6 (stretch): automatic elevation download and land cover built.** See "Build a site" below. The shared course format with the iOS trainer and GPX import aren't started.
 
 **Jog:** hold **Shift** on desktop, or tap the **left stick press** in VR (it ends once you let go of the stick for a second). Jogging is 2.7 m/s (about a 10-minute mile) with its own pace count, 52 per 100 m by default (Settings: "Jogging pace count"), because your stride is longer. Footfalls and the left-hand pulse follow that count while you jog. On grades steeper than 25%, up or down, you walk whatever you ask for, and the HUD says so. The review shows how much of each leg you jogged. If the run mixed gaits, it says so rather than turning the bead error into a single pace count.
@@ -40,7 +46,7 @@ Below that come the result, total time, distance against ideal, how long the map
 - With the headlamp off, only the compass's luminous marks show: the north arrow, the E and W dots, the index dot and the bezel line.
 - Stakes appear only within 10 m.
 
-Run any course at night with **Run it at night** in the Course panel. `matthews-arm-night-1` is a night course with shorter legs (150 to 350 m) and 150 minutes. **N** switches day and night when no course is running. A night run is still reviewed in daylight colours.
+Run any course at night with **Run it at night** in the Course panel. `matthews-arm-night-1` is a night course with shorter legs (150 to 350 m) and 150 minutes. When no course is running, night also falls by itself after sunset (see Sun, time of day and sound above), and **N** switches between night and day. A night run is still reviewed in daylight colours.
 
 Legs are split by the stakes you actually reached, not by which score-card row you wrote in. A leg ends when you punch its point's stake. If you never did, it ends at your closest approach to that point before you punched a later one. A code in the wrong row still counts against you on the card, and the review says what you wrote.
 
@@ -66,6 +72,7 @@ Options go in the query string:
 - `?debug` shows your true position, distance walked and paces counted, on the desktop HUD and on a small panel on the left controller in VR. Use it to check your count against the truth. Debug is for development only; the app never shows position or pace count during a run.
 - `?debug&start=x,z` starts at a scene position, in metres from the NW corner.
 - `?course=<id>` loads one of the site's listed courses (for example `?course=day-1`); `?course=gen:<seed>` generates one.
+- `?time=HH:MM` puts the sun at that local time instead of the real time (`?time=19:10` for a sunset).
 - `?debug&beacon=x,z` puts a tall striped test pole at a scene position. With the compass out, the debug readout shows the dial, the true magnetic azimuth and the true bearing to the beacon.
 
 Desktop: click to capture the mouse, WASD to walk (listen for the footsteps), V toggles walk and fly, R and F fly up and down, Shift flies faster, G switches between the woods and open presets, P opens Settings, H hides the help panel.
@@ -74,7 +81,7 @@ Desktop course keys: E punches a stake within 2 m. Space slides a pace bead (Shi
 
 Desktop tools: C brings out the compass, sighted along your view; the wheel turns its bezel. M brings up the map, and the mouse becomes the pencil. Click to place a dot. Click one dot, then another, to draw a line. Right-click a dot for the protractor. Delete erases the dot under the cursor. The wheel zooms toward the cursor.
 
-Quest: press **Enter VR**. Left stick walks where you're looking. Turn by physically turning; snap turn on the right stick is off by default and lives in Settings. A dark vignette closes in while you move, adjustable in Settings.
+Quest: press **Enter VR**. Left stick walks where you're looking. Turn by physically turning, or with the right stick (snap 30° by default; smooth or off in the X menu or Settings). A dark vignette closes in while you move, adjustable in Settings.
 
 Quest course controls: **right trigger** (map put away) punches a stake within 2 m. **A** slides a pace bead; hold A to reset. **X** shows the score card on your left wrist. **Y** moves to the next row; hold Y to end the course. **Right stick press** (map up) lays the ruler along the last line.
 

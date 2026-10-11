@@ -35,6 +35,9 @@ export const DEFAULTS = Object.freeze({
   night: false,               // set per course or with N; not a saved preference
   nightVisibility: 60,        // m: tree silhouettes against the sky, no more
   nightStakeVisibility: 10,   // m
+  timeOfDay: -1,              // minutes after local midnight for the sun, or -1 for the real time
+  shadows: true,              // the sun casts shadows near you (trees, buildings, you)
+  ambientVolume: 0.6,         // 0..1: wind, birds, insects, water, rain
   vegetation: 'medium',       // 'off' | 'low' | 'medium' | 'high': how far trees are drawn
   collisions: true,           // trunks, logs, rocks and buildings block you (shrubs don't)
   collisionRadius: 0.25,      // m, the walker's body
@@ -97,7 +100,7 @@ export function loadSettings() {
 }
 
 // Set per course or per session, never remembered.
-const TRANSIENT = new Set(['night']);
+const TRANSIENT = new Set(['night', 'timeOfDay']);
 
 export function saveSettings(settings) {
   const s = storage();

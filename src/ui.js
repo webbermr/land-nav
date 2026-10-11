@@ -11,7 +11,7 @@ const FIELDS = [
   { key: 'footfallVolume', label: 'Footstep volume', type: 'range', min: 0, max: 1, step: 0.05 },
   { key: 'hapticStrength', label: 'Left-foot haptic strength', type: 'range', min: 0, max: 1, step: 0.05 },
   { key: 'vignette', label: 'Comfort vignette', type: 'range', min: 0, max: 1, step: 0.05 },
-  { key: 'snapTurn', label: 'Snap turn (right stick)', type: 'checkbox' },
+  { key: 'turn', label: 'Turning (right stick, VR)', type: 'select', options: [['snap', 'Snap'], ['smooth', 'Smooth'], ['off', 'Off']], text: true },
   { key: 'vegetation', label: 'Trees', type: 'select', options: [['high', 'High'], ['medium', 'Medium'], ['low', 'Low'], ['off', 'Off']], text: true },
   { key: 'collisions', label: 'Trees and buildings block you', type: 'checkbox' },
   { key: 'units', label: 'Compass lens units', type: 'select', options: [['deg', 'Degrees'], ['mils', 'Mils']], text: true },

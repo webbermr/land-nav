@@ -142,7 +142,7 @@ await check('Jog (desktop): Shift+W jogs at jog speed with the jog pace count', 
     const r = await page.evaluate(() => ({ gait: window.__landnav.loco.lastGait, speed: window.__landnav.loco.lastSpeed }));
     assert.equal(r.gait, 'jog');
     assert.ok(Math.abs(r.speed - 2.7) < 0.01, `speed ${r.speed}`);
-    await hudSays(/^JOG/);
+    await hudSays(/^EXPLORE\s+JOG/);
   } finally {
     await page.keyboard.up('KeyW');
     await page.keyboard.up('ShiftLeft');
@@ -485,6 +485,47 @@ await check('M5 night: dark scene, red headlamp (T), stakes only within 10 m, lu
   assert.ok(day.lamp === 0 && !day.lume && day.far > 60, JSON.stringify(day));
 });
 
+await check('Explore (desktop): Q teleports to the ground mid-screen; not during a course', async () => {
+  // Put the player back afterwards: later checks aim at a beacon from where they stand.
+  const home = await page.evaluate(() => ({ x: window.__landnav.player.position.x, z: window.__landnav.player.position.z }));
+  await page.evaluate(() => {
+    const l = window.__landnav;
+    window.__t.goTo(1000, 1000);
+    l.input.yaw = 0; l.input.pitch = -0.25; // grid north, a little down
+  });
+  await frames(2);
+  const want = await page.evaluate(async () => {
+    const src = (f) => new URL(f, document.querySelector('script[type=module][src]').src).href;
+    const { rayGround } = await import(src('teleport-logic.js'));
+    const l = window.__landnav;
+    const o = l.camera.getWorldPosition(l.camera.position.clone());
+    const d = l.camera.getWorldDirection(o.clone());
+    return rayGround(o, d, (x, z) => l.terrain.heightAt(x, z), 2000);
+  });
+  await page.keyboard.press('KeyQ');
+  await page.waitForFunction((w) => Math.hypot(window.__landnav.player.position.x - w.x, window.__landnav.player.position.z - w.z) < 0.6, want, { timeout: 10000, polling: 50 });
+  await hudSays(/^EXPLORE/);
+  // During a course: refused, and you stay put.
+  await page.evaluate(() => window.__t.course('day-1'));
+  try {
+    const p0 = await page.evaluate(() => ({ x: window.__landnav.player.position.x, z: window.__landnav.player.position.z }));
+    await page.evaluate(() => { window.__landnav.input.pitch = -0.25; });
+    await page.keyboard.press('KeyQ');
+    await page.waitForTimeout(400);
+    const p1 = await page.evaluate(() => ({ x: window.__landnav.player.position.x, z: window.__landnav.player.position.z }));
+    assert.deepEqual(p1, p0);
+    await hudSays(/Teleport is off during a course/);
+  } finally {
+    await page.evaluate((h) => {
+      const l = window.__landnav;
+      l.run.end(l.run.course.start);
+      l.input.pitch = 0; l.input.yaw = 0;
+      window.__t.goTo(h.x, h.z);
+    }, home);
+    if (await page.evaluate(() => !document.getElementById('review').hidden)) await page.keyboard.press('Escape');
+  }
+});
+
 await check('Enter VR button is offered', async () => {
   await page.waitForFunction(() => !document.getElementById('vr').disabled, null, { timeout: 10000 });
   assert.equal(await page.textContent('#vr'), 'Enter VR');
@@ -629,19 +670,62 @@ await check('VR menu: hold X opens it; the trigger toggles woods, steps the pace
   }
 });
 
-await check('snap turn is off by default, 30 degrees when enabled', async () => {
-  const yaw0 = await page.evaluate(() => window.__landnav.player.rotation.y);
+await check('Explore (VR): right stick forward shows the arc; letting go jumps there', async () => {
+  await page.evaluate(() => {
+    const l = window.__landnav;
+    window.__t.goTo(1000, 1000);
+    // Right controller at chest height pointing north and 20 degrees up.
+    const e = window.__t.eye();
+    window.__t.aim('right', 'ray', [e[0] + 0.2, e[1] - 0.4, e[2] - 0.2], [e[0] + 0.2, e[1] - 0.4 + Math.tan(0.35) * 10, e[2] - 10.2]);
+  });
+  await frames(2);
+  try {
+    await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, -1]; });
+    await frames(3);
+    const target = await page.evaluate(() => window.__landnav.teleporter.target);
+    assert.ok(target, 'a valid landing point');
+    assert.ok(await page.evaluate(() => window.__landnav.scene.getObjectByName('teleport-arc').visible));
+    const h0 = await page.evaluate(() => window.__t.eye());
+    assert.ok(Math.hypot(target.x - h0[0], target.z - h0[2]) > 10, 'the arc reaches beyond 10 m');
+    await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, 0]; });
+    await page.waitForFunction((t) => {
+      const e = window.__t.eye();
+      return Math.hypot(e[0] - t.x, e[2] - t.z) < 0.6;
+    }, target, { timeout: 10000, polling: 50 });
+    const ground = await page.evaluate(() => {
+      const l = window.__landnav; const e = window.__t.eye();
+      return Math.abs(l.player.position.y - l.terrain.heightAt(e[0], e[2]));
+    });
+    assert.ok(ground < 0.05, 'standing on the ground there');
+  } finally {
+    await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, 0]; });
+  }
+});
+
+await check('turning: snap 30 degrees by default (once per flick), smooth while held, off', async () => {
+  const yaw = () => page.evaluate(() => window.__landnav.player.rotation.y);
+  const yaw0 = await yaw();
   await page.evaluate(() => { window.__xr.axes.right = [0, 0, 1, 0]; });
-  await frames(4);
+  await frames(6); // held: must turn once, not every frame
   await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, 0]; });
   await frames(2);
-  assert.equal(await page.evaluate(() => window.__landnav.player.rotation.y), yaw0);
-  await page.evaluate(() => { window.__landnav.settings.snapTurn = true; window.__xr.axes.right = [0, 0, 1, 0]; });
-  await frames(6); // held: must turn once, not every frame
-  await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, 0]; window.__landnav.settings.snapTurn = false; });
-  await frames(2);
-  const turned = await page.evaluate(() => window.__landnav.player.rotation.y) - yaw0;
-  assert.ok(Math.abs(turned + Math.PI / 6) < 1e-6, `turned ${turned}`);
+  const snapped = (await yaw()) - yaw0;
+  assert.ok(Math.abs(snapped + Math.PI / 6) < 1e-6, `snap turned ${snapped}`);
+  try {
+    await page.evaluate(() => { window.__landnav.settings.turn = 'smooth'; window.__xr.axes.right = [0, 0, 1, 0]; });
+    await frames(6);
+    await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, 0]; });
+    await frames(2);
+    const smooth = (await yaw()) - yaw0 - snapped;
+    assert.ok(smooth < -0.01 && Math.abs(smooth + Math.PI / 6) > 1e-3, `smooth turned ${smooth}`);
+    const before = await yaw();
+    await page.evaluate(() => { window.__landnav.settings.turn = 'off'; window.__xr.axes.right = [0, 0, 1, 0]; });
+    await frames(4);
+    assert.equal(await yaw(), before, 'off: no turning');
+  } finally {
+    await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, 0]; window.__landnav.settings.turn = 'snap'; });
+    await frames(2);
+  }
 });
 
 await check('M2 VR: compass in the right hand reads the beacon within 1 degree', async () => {
@@ -690,13 +774,13 @@ await check('M2 VR: tilted past 15 degrees the dial sticks, and frees when level
 await check('M2 VR: right stick clicks the bezel while the compass is held (and does not snap turn)', async () => {
   const b0 = await page.evaluate(() => window.__landnav.tools.compass.bezelDeg);
   const yaw0 = await page.evaluate(() => window.__landnav.player.rotation.y);
-  await page.evaluate(() => { window.__landnav.settings.snapTurn = true; window.__xr.axes.right = [0, 0, 1, 0]; });
+  await page.evaluate(() => { window.__xr.axes.right = [0, 0, 1, 0]; });
   await frames(2);
   const first = await page.evaluate(() => window.__landnav.tools.compass.bezelDeg) - b0;
   // Holding repeats after a pause (frame time, which is slow headless): wait for it.
   await page.waitForFunction((b) => window.__landnav.tools.compass.bezelDeg - b > 3, b0, { timeout: 30000, polling: 50 });
   const held = await page.evaluate(() => window.__landnav.tools.compass.bezelDeg) - b0;
-  await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, 0]; window.__landnav.settings.snapTurn = false; });
+  await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, 0]; });
   await frames(2);
   assert.equal(first, 3);
   assert.ok(held > 3 && held % 3 === 0, `held ${held}`);

@@ -86,6 +86,24 @@ Open `https://webbermr.github.io/land-nav/?debug`, set your pace count in Settin
 
 WebXR needs HTTPS, so the headset uses the GitHub Pages build: **https://webbermr.github.io/land-nav/**. Every push to `main` runs the tests and redeploys. Pushes to other branches and pull requests run the tests only. The workflow is `.github/workflows/pages.yml`, and it needs Settings → Pages → Source set to **GitHub Actions**, once.
 
+## Build a site from the web
+
+The **[site builder](https://webbermr.github.io/land-nav/builder.html)** (`builder.html`, linked from the Course panel) does everything below without a terminal:
+
+1. Click the map to place the square (1 to 3 km). It's drawn exactly as the build will make it, and it warns if the square crosses a UTM zone, a 100 km grid line or an MGRS band. Optionally place the course start, then name the site.
+2. Tick what to add: real tree cover, roads and trails, and how many day and night courses. **Update a site** adds any of these to an existing site.
+3. **Send to GitHub** opens a new issue with the request filled in. Press *Submit new issue*.
+4. `.github/workflows/build-site.yml` runs it with `tools/build_request.py`:
+   - It downloads the elevation, works out the declination from the World Magnetic Model, and builds the site, tree cover, roads and courses.
+   - It pushes a branch and comments on the issue with a summary and a pull request.
+   - Merge the PR and Pages publishes the site.
+
+This needs no tokens or passwords: you submit the issue on GitHub while signed in. Only issues from the repository's owner, members and collaborators are built. The request is validated field by field, and nothing from it reaches a shell. If OpenStreetMap or the land cover service is busy, the build carries on without that part and says so; add it later with **Update a site**.
+
+One-time setting: for the workflow to open the pull request itself, allow it under repo **Settings → Actions → General → Workflow permissions → Allow GitHub Actions to create and approve pull requests**. Without that, the branch is still pushed and the issue comment links to a one-click "open a pull request" page. Pull requests opened by the workflow don't trigger the test workflow (a GitHub rule for its own token); the tests run when you merge.
+
+The **Run it in a terminal instead** section on the page shows the same build as commands.
+
 ## Build a site from USGS data
 
 1. Look up the declination for the site and date with the [NOAA magnetic field calculator](https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml). East is positive, west is negative.
@@ -122,6 +140,8 @@ Then convert it and re-render the map:
 
 ```sh
 python3 tools/make_features.py --site my-site --osm export.json
+# or let it download the export itself from a public Overpass server:
+python3 tools/make_features.py --site my-site --fetch
 ```
 
 That writes `features.json`, sets `"features": true` in `site.json`, and redraws `map.png` with roads, trails, streams, the campground outline, buildings and a legend, plus the OSM credit in the margin. In the world, roads, tracks, trails and streams are laid on the ground, parking lots are paved, and buildings are simple boxes. Trees stay off roads and trails, out of parking lots and away from buildings, and thin out in campgrounds. Run it again after re-running `make_site.py`, which rewrites `site.json` and `map.png`.
@@ -196,6 +216,11 @@ tools/make_site.py    DEM GeoTIFF -> site folder
 tools/make_features.py OpenStreetMap export -> features.json and map symbols
 tools/fetch_usgs.py   downloads: 3DEP elevation, lidar survey names, NLCD land cover
 tools/make_landcover.py NLCD land cover and tree canopy -> landcover.bin
+tools/build_request.py runs a web builder request (validate, build, summarise)
+builder.html          the site builder page
+src/builder/          builder page: map and form (main.js), request logic (request.js, tested)
+src/utm.js            lat/lon <-> UTM in the browser (tested against PROJ)
+vendor/leaflet/       Leaflet 1.9.4 (builder map), unmodified
 vendor/three/         three.js r186, unmodified
 ```
 

@@ -11,6 +11,9 @@ few named points are kept, in scene metres (x east, z south from the NW corner).
     # 2. Convert:
     python3 tools/make_features.py --site shenandoah-matthews-arm --osm export.json
 
+    # Or let it do both (tries a few public Overpass servers):
+    python3 tools/make_features.py --site shenandoah-matthews-arm --fetch
+
 OpenStreetMap data is (c) OpenStreetMap contributors, ODbL. The map margin says so.
 """
 
@@ -33,6 +36,47 @@ HIGHWAYS = {
 WATERWAYS = {'stream': ('stream', 1.5), 'river': ('stream', 6), 'ditch': ('stream', 1)}
 
 
+# Public Overpass servers, tried in order. overpass-api.de often refuses busy
+# periods; the others are community mirrors.
+OVERPASS = [
+    'https://overpass.kumi.systems/api/interpreter',
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.private.coffee/api/interpreter',
+]
+QUERY = ('[out:json][timeout:120];('
+         'way({s},{w},{n},{e})[~"^(highway|tourism|amenity|leisure|waterway|building|natural|landuse)$"~"."];'
+         'node({s},{w},{n},{e})[~"^(tourism|amenity|natural)$"~"."];);out geom;')
+
+
+def fetch_osm(site, dest, margin_m=400):
+    """Download the OSM export for a site's playable area plus a margin."""
+    import time
+    import urllib.parse
+    import urllib.request
+    to_ll = Transformer.from_crs(f"EPSG:{site['epsg']}", 'EPSG:4326', always_xy=True)
+    e0, n1, size = site['e_west'] - margin_m, site['n_north'] + margin_m, site['size_m'] + 2 * margin_m
+    lons, lats = zip(*[to_ll.transform(e, n) for e in (e0, e0 + size) for n in (n1, n1 - size)])
+    q = QUERY.format(s=f'{min(lats):.5f}', w=f'{min(lons):.5f}', n=f'{max(lats):.5f}', e=f'{max(lons):.5f}')
+    body = urllib.parse.urlencode({'data': q}).encode()
+    errors = []
+    # The public servers turn requests away when busy; it usually passes in a minute.
+    for attempt in range(4):
+        for url in OVERPASS:
+            try:
+                req = urllib.request.Request(url, data=body, headers={'User-Agent': 'land-nav-vr site builder'})
+                with urllib.request.urlopen(req, timeout=180) as res:
+                    data = res.read()
+                if json.loads(data).get('elements') is None:
+                    raise ValueError('no elements in the reply')
+                Path(dest).write_bytes(data)
+                return dest
+            except Exception as exc:  # noqa: BLE001 - any failure: try the next server
+                errors.append(f'{url}: {exc}')
+        if attempt < 3:
+            time.sleep(15 * 2 ** attempt)
+    raise SystemExit('Could not download OpenStreetMap data:\n  ' + '\n  '.join(errors[-3:]))
+
+
 def area_kind(tags):
     if tags.get('tourism') in ('camp_site', 'caravan_site'):
         return 'campground'
@@ -52,13 +96,20 @@ def area_kind(tags):
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--site', required=True)
-    p.add_argument('--osm', required=True, help='Overpass JSON with geometry (out geom)')
+    src = p.add_mutually_exclusive_group(required=True)
+    src.add_argument('--osm', help='Overpass JSON with geometry (out geom)')
+    src.add_argument('--fetch', action='store_true', help='Download it from a public Overpass server')
     p.add_argument('--out', default=str(Path(__file__).resolve().parent.parent / 'sites'))
     a = p.parse_args(argv)
 
     site_dir = Path(a.out) / a.site
     site = json.loads((site_dir / 'site.json').read_text())
+    if a.fetch:
+        print('Downloading OpenStreetMap data ...')
+        a.osm = str(fetch_osm(site, site_dir / '.osm.json'))
     osm = json.loads(Path(a.osm).read_text())
+    if a.fetch:
+        Path(a.osm).unlink()
     to_utm = Transformer.from_crs('EPSG:4326', f"EPSG:{site['epsg']}", always_xy=True)
     sk = site['skirt']
     # Keep anything that touches the skirt area; drop the rest.

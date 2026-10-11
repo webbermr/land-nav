@@ -146,7 +146,9 @@ export function validateCourse(course, site, field, opts = {}) {
       problems.push(`${s.code} is within ${o.edgeMargin} m of the boundary`);
     }
   }
-  for (const s of stakes) {
+  // The start is wherever the course begins (a trailhead, say): only stakes need
+  // gentle ground.
+  for (const s of [...course.points, ...course.decoys]) {
     const g = slopeAt(field, s.x, s.z);
     if (g >= o.maxSlope) problems.push(`${s.code} is on a ${(g * 100).toFixed(0)}% slope`);
   }

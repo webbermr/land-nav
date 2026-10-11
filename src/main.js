@@ -802,7 +802,12 @@ function buildCoursePanel(index, sites = []) {
   const note = document.createElement('p');
   note.className = 'note';
   note.textContent = (siteData.site.default_start ? `The START flag is at ${siteData.site.default_start.name}. ` : '') + 'You start at the START flag. Plot the points from the score card, navigate to each, punch its stake, then come back to the start and end the course.';
-  coursePanel.append(h, select, seedRow, nightRow, startBtn, endBtn, reviewBtn, note);
+  const builder = document.createElement('p');
+  builder.className = 'note';
+  const link = Object.assign(document.createElement('a'), { href: 'builder.html', textContent: 'Site builder' });
+  link.style.color = '#ffd27a';
+  builder.append(link, ': make a site anywhere in the US, or add courses.');
+  coursePanel.append(h, select, seedRow, nightRow, startBtn, endBtn, reviewBtn, note, builder);
 }
 
 document.getElementById('course-button').addEventListener('click', () => {

@@ -1,0 +1,58 @@
+{
+  "id": "blue-knob-night-1",
+  "site": "blue-knob",
+  "name": "Blue Knob Night 1",
+  "seed": 563482,
+  "time_limit_min": 150,
+  "pass_threshold": 3,
+  "preset": "woods",
+  "start": {
+    "x": 965,
+    "z": 985
+  },
+  "points": [
+    {
+      "code": "P4",
+      "x": 795,
+      "z": 845
+    },
+    {
+      "code": "P2",
+      "x": 945,
+      "z": 815
+    },
+    {
+      "code": "Z8",
+      "x": 645,
+      "z": 895
+    },
+    {
+      "code": "Y1",
+      "x": 865,
+      "z": 625
+    }
+  ],
+  "decoys": [
+    {
+      "code": "W3",
+      "x": 945,
+      "z": 465
+    },
+    {
+      "code": "H9",
+      "x": 605,
+      "z": 645
+    },
+    {
+      "code": "W5",
+      "x": 485,
+      "z": 885
+    },
+    {
+      "code": "M1",
+      "x": 805,
+      "z": 395
+    }
+  ],
+  "night": true
+}

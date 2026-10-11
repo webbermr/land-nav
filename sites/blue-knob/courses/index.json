@@ -1,0 +1,17 @@
+[
+  {
+    "id": "blue-knob-1",
+    "name": "Blue Knob 1",
+    "file": "blue-knob-1.json"
+  },
+  {
+    "id": "blue-knob-2",
+    "name": "Blue Knob 2",
+    "file": "blue-knob-2.json"
+  },
+  {
+    "id": "blue-knob-night-1",
+    "name": "Blue Knob Night 1",
+    "file": "blue-knob-night-1.json"
+  }
+]

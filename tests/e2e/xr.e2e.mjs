@@ -133,6 +133,23 @@ await check('desktop walk follows the ground at eye height', async () => {
   assert.ok(Math.abs(r.eye - 1.7) < 0.01, JSON.stringify(r));
 });
 
+await check('Jog (desktop): Shift+W jogs at jog speed with the jog pace count', async () => {
+  await page.evaluate(() => { const l = window.__landnav; l.settings.slopeEffects = false; l.loco.pace.reset(); });
+  try {
+    await page.keyboard.down('ShiftLeft');
+    await page.keyboard.down('KeyW');
+    await page.waitForFunction(() => window.__landnav.loco.pace.distance > 3, null, { timeout: 30000, polling: 50 });
+    const r = await page.evaluate(() => ({ gait: window.__landnav.loco.lastGait, speed: window.__landnav.loco.lastSpeed }));
+    assert.equal(r.gait, 'jog');
+    assert.ok(Math.abs(r.speed - 2.7) < 0.01, `speed ${r.speed}`);
+    await hudSays(/^JOG/);
+  } finally {
+    await page.keyboard.up('KeyW');
+    await page.keyboard.up('ShiftLeft');
+    await page.evaluate(() => { window.__landnav.settings.slopeEffects = true; });
+  }
+});
+
 await check('M2 desktop: compass reads the beacon within 1 degree of the computed magnetic azimuth', async () => {
   await page.evaluate(({ x, z }) => {
     const { input, player } = window.__landnav;
@@ -542,6 +559,22 @@ await check('stick deadzone ignores drift', async () => {
   await page.evaluate(() => { window.__xr.axes.left = [0, 0, 0, 0]; });
   const a = await page.evaluate(() => ({ ...window.__landnav.player.position }));
   assert.equal(a.x, b.x); assert.equal(a.z, b.z);
+});
+
+await check('Jog (VR): tap the left stick press to jog; it ends once you stop', async () => {
+  await page.evaluate(() => { window.__landnav.settings.slopeEffects = false; });
+  try {
+    await page.evaluate(() => { window.__xr.buttons.left[3] = true; }); await frames(2);
+    await page.evaluate(() => { window.__xr.buttons.left[3] = false; }); await frames(2);
+    assert.equal(await page.evaluate(() => window.__landnav.xrJog), true, 'tap turns jog on');
+    await page.evaluate(() => { window.__xr.axes.left = [0, 0, 0, -1]; });
+    await page.waitForFunction(() => window.__landnav.loco.lastSpeed > 2, null, { timeout: 15000, polling: 50 });
+    assert.equal(await page.evaluate(() => window.__landnav.loco.lastGait), 'jog');
+    await page.evaluate(() => { window.__xr.axes.left = [0, 0, 0, 0]; });
+    await page.waitForFunction(() => !window.__landnav.xrJog, null, { timeout: 15000, polling: 50 });
+  } finally {
+    await page.evaluate(() => { window.__xr.axes.left = [0, 0, 0, 0]; window.__landnav.settings.slopeEffects = true; });
+  }
 });
 
 await check('snap turn is off by default, 30 degrees when enabled', async () => {

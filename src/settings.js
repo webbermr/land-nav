@@ -7,6 +7,9 @@ export const DEFAULTS = Object.freeze({
   // Pace and movement (spec section 6)
   paceCountPer100m: 65,
   baseSpeed: 1.3,             // m/s on flat ground
+  jogPaceCountPer100m: 52,    // longer strides when jogging, so fewer paces
+  jogSpeed: 2.7,              // m/s on flat ground, about a 10-minute mile
+  jogMaxGrade: 0.25,          // steeper than this, up or down, and you walk
   timeScale: 1,               // 1, 2 or 3
   slopeEffects: true,
   toblerK: 3.5,

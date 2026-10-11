@@ -131,7 +131,7 @@ export class CourseRun {
     return this.course.time_limit_min * 60;
   }
 
-  // pos: true horizontal position. flags: { moving, mapOut, compassOut }.
+  // pos: true horizontal position. flags: { moving, mapOut, compassOut, jog }.
   update(dt, pos, flags) {
     const vis2 = (this.settings.night ? this.settings.nightStakeVisibility : this.settings.stakeVisibility) ** 2;
     for (const s of this.stakes) {
@@ -140,7 +140,7 @@ export class CourseRun {
     if (this.state === 'ready' && flags.moving) this.begin(pos);
     if (this.state !== 'running') return;
     this.elapsed += dt * this.settings.timeScale;
-    this.log.sample(this.elapsed, pos.x, pos.z);
+    this.log.sample(this.elapsed, pos.x, pos.z, 1, !!flags.jog);
     this.log.tool('map', !!flags.mapOut, this.elapsed);
     this.log.tool('compass', !!flags.compassOut, this.elapsed);
     if (this.elapsed >= this.timeLimitSec) this.end(pos, 'time');

@@ -34,6 +34,15 @@ export function trackBetween(track, t0, t1) {
   return pts;
 }
 
+// Metres covered while jogging: segments that end on a jogging sample.
+export function joggedLength(pts) {
+  let d = 0;
+  for (let i = 1; i < pts.length; i++) {
+    if (pts[i].j) d += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z);
+  }
+  return d;
+}
+
 export function pathLength(pts) {
   let d = 0;
   for (let i = 1; i < pts.length; i++) d += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].z - pts[i - 1].z);
@@ -163,6 +172,7 @@ export function analyzeRun(run, site) {
       t1: w.t1,
       time: w.t1 - w.t0,
       walked: pathLength(pts),
+      jogged: joggedLength(pts),
       endedBy: w.endedBy,
       punched: w.punch?.code ?? null,
       entered,
@@ -185,6 +195,7 @@ export function analyzeRun(run, site) {
     totals: {
       time: end,
       walked: pathLength(log.track),
+      jogged: joggedLength(log.track),
       ideal: legs.reduce((s, l) => s + l.distance, 0),
       mapSec: overlap(log.intervals?.map || [], 0, end),
       compassSec: overlap(log.intervals?.compass || [], 0, end),
@@ -205,6 +216,7 @@ export function buildRunExport({ course, site, log, beads, result, settings, dat
     course,
     settings: {
       paceCountPer100m: settings.paceCountPer100m,
+      jogPaceCountPer100m: settings.jogPaceCountPer100m,
       timeScale: settings.timeScale,
       slopeEffects: settings.slopeEffects,
       preset: course.preset ?? settings.preset,

@@ -156,25 +156,31 @@ function drawPanel(g, run, analysis, hint) {
     g.fillStyle = color; g.fillRect(x0, y - 26, 14, 30);
     const mark = l.correct === true ? '  ✓' : l.correct === false ? `  ✗ (card: ${l.entered ?? 'blank'})` : '';
     line(`Leg ${l.n} to ${l.label}${l.code ? ` ${l.code}` : ''}${mark}`, { size: 29, bold: true, x: x0 + 26, gap: 1.25 });
-    line(`${Math.round(l.gridAz)}° grid / ${Math.round(l.magAz)}° mag, ${Math.round(l.distance)} m   took ${formatDuration(l.time)}, walked ${Math.round(l.walked)} m`, { size: 23, x: x0 + 26, gap: 1.3 });
+    const jogged = l.walked > 0 && l.jogged / l.walked >= 0.05 ? ` (${Math.round((100 * l.jogged) / l.walked)}% jogged)` : '';
+    line(`${Math.round(l.gridAz)}° grid / ${Math.round(l.magAz)}° mag, ${Math.round(l.distance)} m   took ${formatDuration(l.time)}, covered ${Math.round(l.walked)} m${jogged}`, { size: 23, x: x0 + 26, gap: 1.3 });
     const reach = l.found ? 'reached it' : `closest ${Math.round(l.closest?.d ?? 0)} m`;
     const drift = l.drift
       ? (l.drift.short ? `leg ended before ${Math.round(l.distance)} m` : `at ${Math.round(l.distance)} m: ${formatDrift(l.drift.lateral)}, ${Math.round(l.drift.toTarget)} m from it`)
       : '';
     line(`${reach}   ${drift}`, { size: 23, x: x0 + 26, gap: 1.3 });
     const pace = l.pace
-      ? `beads ${l.pace.beads} (${l.pace.claimed} m) for ${Math.round(l.pace.walked)} m walked: ${formatPaceError(l.pace.error)}`
+      ? `beads ${l.pace.beads} (${l.pace.claimed} m) for ${Math.round(l.pace.walked)} m covered: ${formatPaceError(l.pace.error)}`
       : 'no beads slid';
     line(pace, { size: 23, x: x0 + 26, color: l.pace ? '#222' : '#888', gap: 1.75 });
   });
 
   if (analysis.pace) {
     const p = analysis.pace;
-    const count = run.settings?.paceCountPer100m;
-    line(`Pace overall: beads ${formatPaceError(p.error)} against distance walked`, { size: 26, bold: true, gap: 1.3 });
+    const jogShare = t.walked > 0 ? t.jogged / t.walked : 0;
+    // Bead error against one count only makes sense if you mostly used one gait.
+    const gait = jogShare >= 0.9 ? 'jog' : jogShare <= 0.1 ? 'walk' : null;
+    const count = gait === 'jog' ? run.settings?.jogPaceCountPer100m : gait === 'walk' ? run.settings?.paceCountPer100m : null;
+    line(`Pace overall: beads ${formatPaceError(p.error)} against distance covered`, { size: 26, bold: true, gap: 1.3 });
     if (count && p.walked > 0) {
       const effective = count * (p.claimed / p.walked);
-      line(`Your count worked out to ${effective.toFixed(0)} paces per 100 m here (setting ${count}).`, { size: 23, gap: 1.6 });
+      line(`Your ${gait}ing count worked out to ${effective.toFixed(0)} paces per 100 m here (setting ${count}).`, { size: 23, gap: 1.6 });
+    } else if (!gait) {
+      line(`You jogged ${Math.round(jogShare * 100)}% of the way, so this mixes your walking and jogging counts.`, { size: 23, gap: 1.6 });
     }
   }
   g.font = '22px system-ui, sans-serif'; g.fillStyle = '#777';

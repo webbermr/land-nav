@@ -4,8 +4,8 @@
 //
 // A pace is two steps. The user counts every time the left foot lands.
 
-export function paceLength(settings) {
-  return 100 / settings.paceCountPer100m;
+export function paceLength(settings, gait = 'walk') {
+  return 100 / (gait === 'jog' ? settings.jogPaceCountPer100m : settings.paceCountPer100m);
 }
 
 // Tobler's hiking function, normalized so flat ground gives 1.
@@ -61,29 +61,34 @@ export class Locomotion {
     this.pace = new PaceCounter();
     this.lastGrade = 0;
     this.lastSpeed = 0;
+    this.lastGait = 'walk';
+    this.tooSteepToJog = false;
   }
 
   // One frame of stick (or key) movement.
   //   x, z        current horizontal position (scene metres)
   //   dirX, dirZ  desired direction of travel, any length
   //   throttle    0..1 stick deflection
+  //   jog         asked to jog (you walk anyway where it's too steep)
   // Returns the horizontal displacement to apply and the footfalls it produced.
-  step(dt, ground, x, z, dirX, dirZ, throttle = 1) {
+  step(dt, ground, x, z, dirX, dirZ, throttle = 1, jog = false) {
     const s = this.settings;
     const len = Math.hypot(dirX, dirZ);
     const t = Math.min(1, Math.max(0, throttle));
     if (len < 1e-6 || t === 0 || !(dt > 0)) {
       this.lastSpeed = 0;
+      this.tooSteepToJog = false;
       return { dx: 0, dz: 0, feet: [] };
     }
     const ux = dirX / len;
     const uz = dirZ / len;
 
-    let speed = s.baseSpeed * s.timeScale * t;
+    const grade = s.slopeEffects ? ground.slopeAt(x, z, ux, uz) : 0;
+    this.tooSteepToJog = jog && Math.abs(grade) > s.jogMaxGrade;
+    const gait = jog && !this.tooSteepToJog ? 'jog' : 'walk';
+    let speed = (gait === 'jog' ? s.jogSpeed : s.baseSpeed) * s.timeScale * t;
     let stride = 1;
-    let grade = 0;
     if (s.slopeEffects) {
-      grade = ground.slopeAt(x, z, ux, uz);
       speed *= toblerFactor(grade, s.toblerK, s.toblerOffset);
       stride = strideFactor(grade, s);
     }
@@ -101,8 +106,9 @@ export class Locomotion {
     const dz = nz - z;
     // Only distance actually covered counts, so pushing into the boundary or a
     // tree is silent, and sliding along one counts only the slide.
-    const feet = this.pace.advance(Math.hypot(dx, dz), (paceLength(s) / 2) * stride);
+    const feet = this.pace.advance(Math.hypot(dx, dz), (paceLength(s, gait) / 2) * stride);
 
+    this.lastGait = gait;
     this.lastGrade = grade;
     this.lastSpeed = Math.hypot(dx, dz) / dt;
     return { dx, dz, feet };

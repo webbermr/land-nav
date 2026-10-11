@@ -3,15 +3,15 @@
 
 export class RunLog {
   constructor() {
-    this.track = [];           // { t, x, z } about once a second
+    this.track = [];           // { t, x, z, j? } about once a second; j: 1 while jogging
     this.events = [];          // { t, type, ...data }
     this.intervals = { map: [], compass: [] }; // [start, end] while each tool was out
     this._open = {};
   }
 
-  sample(t, x, z, every = 1) {
+  sample(t, x, z, every = 1, jog = false) {
     const last = this.track[this.track.length - 1];
-    if (!last || t - last.t >= every) this.track.push({ t, x, z });
+    if (!last || t - last.t >= every) this.track.push(jog ? { t, x, z, j: 1 } : { t, x, z });
   }
 
   tool(name, out, t) {

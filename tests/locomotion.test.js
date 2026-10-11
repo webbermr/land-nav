@@ -13,13 +13,13 @@ function rampGround(gradeEast, size = 2000) {
 const flat = rampGround(0);
 
 // Walk `metres` of horizontal distance in fixed frames, finishing on the exact distance.
-function walk(loco, ground, metres, { dt = 1 / 72, dirX = 1, dirZ = 0, throttle = 1, x0 = 100, z0 = 1000 } = {}) {
+function walk(loco, ground, metres, { dt = 1 / 72, dirX = 1, dirZ = 0, throttle = 1, x0 = 100, z0 = 1000, jog = false } = {}) {
   let x = x0, z = z0, left = 0, right = 0, frames = 0;
   let speed = loco.settings.baseSpeed;
   for (;;) {
     const remaining = metres - Math.hypot(x - x0, z - z0);
     if (remaining <= 1e-9 || frames > 1e6) break;
-    const step = loco.step(Math.min(dt, remaining / speed), ground, x, z, dirX, dirZ, throttle);
+    const step = loco.step(Math.min(dt, remaining / speed), ground, x, z, dirX, dirZ, throttle, jog);
     if (step.dx === 0 && step.dz === 0) break;
     speed = loco.lastSpeed;
     x += step.dx; z += step.dz; frames++;
@@ -120,4 +120,23 @@ test('boundary stops movement and footfalls', () => {
   assert.deepEqual(blocked.feet, []);
   // Sliding along the edge still works.
   close(loco.step(1, flat, 2000, 1000, 1, -1).dz, -1.3 / Math.SQRT2);
+});
+
+test('jog: faster, with its own pace count on flat ground', () => {
+  const loco = new Locomotion({ ...DEFAULTS });
+  const r = walk(loco, flat, 100, { jog: true });
+  assert.equal(r.left, DEFAULTS.jogPaceCountPer100m);
+  assert.equal(loco.lastGait, 'jog');
+  close(loco.lastSpeed, DEFAULTS.jogSpeed, 1e-6);
+  close(paceLength(DEFAULTS, 'jog'), 100 / DEFAULTS.jogPaceCountPer100m);
+});
+
+test('jog: too steep, and you walk at walking speed and count', () => {
+  const loco = new Locomotion({ ...DEFAULTS });
+  walk(loco, rampGround(0.3), 10, { jog: true });
+  assert.equal(loco.lastGait, 'walk');
+  assert.equal(loco.tooSteepToJog, true);
+  assert.ok(loco.lastSpeed < DEFAULTS.baseSpeed, 'Tobler slows the walk uphill too');
+  walk(loco, rampGround(0.2), 10, { jog: true });
+  assert.equal(loco.lastGait, 'jog', 'a 20% grade is still jogging');
 });

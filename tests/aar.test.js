@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   positionAt, trackBetween, pathLength, closestApproach, pointAtDistance, offsetFromLine,
-  legWindows, legPace, analyzeRun, buildRunExport, formatDrift, formatPaceError, formatDuration,
+  legWindows, legPace, analyzeRun, joggedLength, buildRunExport, formatDrift, formatPaceError, formatDuration,
 } from '../src/aar-logic.js';
 import { RunLog } from '../src/runlog.js';
 import { BeadCounter } from '../src/beads.js';
@@ -173,4 +173,13 @@ test('formatting', () => {
   assert.equal(formatDrift(0.3), 'on line');
   assert.equal(formatPaceError(0.083), '+8%');
   assert.equal(formatPaceError(-0.09), '-9%');
+});
+
+test('joggedLength: counts segments that end on a jogging sample', () => {
+  const tr = [{ t: 0, x: 0, z: 0 }, { t: 1, x: 3, z: 0, j: 1 }, { t: 2, x: 6, z: 0, j: 1 }, { t: 3, x: 7, z: 0 }];
+  assert.equal(joggedLength(tr), 6);
+  const log = new RunLog();
+  log.sample(0, 0, 0);
+  log.sample(1, 3, 0, 1, true);
+  assert.deepEqual(log.track[1], { t: 1, x: 3, z: 0, j: 1 });
 });

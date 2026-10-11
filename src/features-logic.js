@@ -50,8 +50,11 @@ function bbox(pts, pad = 0) {
 }
 
 export class FeatureIndex {
-  constructor(features) {
+  // areaDensity: overrides for AREA_DENSITY, e.g. { campground: 1 } when real land
+  // cover data already thins the trees there.
+  constructor(features, { areaDensity = {} } = {}) {
     this.features = features || { lines: [], areas: [], points: [] };
+    this.areaDensity = { ...AREA_DENSITY, ...areaDensity };
     this.cells = new Map();
     this.buildings = [];
     for (const line of this.features.lines || []) {
@@ -99,7 +102,7 @@ export class FeatureIndex {
     }
     let d = 1;
     for (const a of cell.areas) {
-      const mult = AREA_DENSITY[a.kind] ?? 1;
+      const mult = this.areaDensity[a.kind] ?? 1;
       if (mult >= d) continue;
       const inside = pointInPolygon(x, z, a.pts);
       if (inside || (a.kind === 'building' && polygonEdgeDistance(x, z, a.pts) < BUILDING_CLEAR_M)) d = mult;

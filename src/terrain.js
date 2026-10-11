@@ -217,10 +217,13 @@ export function buildTerrain(renderer, { site, field, skirtField }, { coverAt } 
     sh.uniforms.canopyRange = canopyRange;
     sh.vertexShader = 'attribute float cover;\nvarying float vCover;\n'
       + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vCover = cover;');
-    sh.fragmentShader = 'uniform vec3 canopyColor;\nuniform vec2 canopyRange;\nvarying float vCover;\n'
+    sh.uniforms.gfxAerialOn = { get value() { return GROUND_FX.aerialBox.value.w; } };
+    // Past the drawn trees the ground reads as canopy, unless the aerial photographs
+    // are there to show the real thing.
+    sh.fragmentShader = 'uniform vec3 canopyColor;\nuniform vec2 canopyRange;\nuniform float gfxAerialOn;\nvarying float vCover;\n'
       + sh.fragmentShader.replace('#include <color_fragment>',
-        '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, canopyColor, vCover * smoothstep(canopyRange.x, canopyRange.y, length(vViewPosition)));');
-    patchGround(sh, { withCover: true });
+        '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, canopyColor, (1.0 - gfxAerialOn) * vCover * smoothstep(canopyRange.x, canopyRange.y, length(vViewPosition)));');
+    patchGround(sh, { withCover: true, aerial: true });
   };
 
   const cells = field.grid - 1;

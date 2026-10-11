@@ -41,6 +41,9 @@ import { Teleporter } from './teleport.js';
 import { rayGround } from './teleport-logic.js';
 import { RED_LIGHT, NO_LIGHT, tintUnlit, createHeadlamp, HEADLAMP_INTENSITY } from './night.js';
 import { dataUrl } from './data-url.js';
+import { buildInstantSite, instantSiteData, cacheKey, loadCachedSite, saveCachedSite } from './instant-site.js';
+import { loadSkirtAerial, loadFarField, buildFarRing, fetchFarAerial } from './aerial.js';
+import { GROUND_FX } from './ground-fx.js';
 
 const params = new URLSearchParams(location.search);
 // The site comes from ?site=, else the first entry in sites/index.json (see start()).
@@ -84,6 +87,7 @@ const weatherFx = new WeatherVisuals(scene);
 let weatherNow = presetWeather('clear');
 let fx = weatherEffects(weatherNow);
 let phen = { leaf: 1, autumn: 0, spring: 0 };
+let farRing = null; // terrain out to 20 km (src/aerial.js), once loaded
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 9000);
 camera.rotation.order = 'YXZ';
@@ -104,7 +108,9 @@ const isNight = () => settings.night || env.dark;
 // Dusk closes in gradually: from the day range at the end of civil twilight to the
 // night range once the sky is properly dark.
 function fogRange() {
-  let day = settings.preset === 'woods' ? [settings.woodsVisibility * 0.15, settings.woodsVisibility] : [1500, 7000];
+  // Open: haze, out to the horizon when the far terrain is there.
+  const open = farRing?.visible ? [2500, 32000] : [1500, 7000];
+  let day = settings.preset === 'woods' ? [settings.woodsVisibility * 0.15, settings.woodsVisibility] : open;
   // Fog, rain and snow: you see as far as the weather report says.
   if (fx.visibilityM < day[1]) day = [Math.min(day[0], fx.visibilityM * 0.04), Math.max(30, fx.visibilityM)];
   if (settings.night) return [2, settings.nightVisibility];
@@ -408,6 +414,7 @@ function onSettingChange(key) {
   if (key === 'vegetation') applyCanopyRange();
   if (key === 'timeOfDay') setTimeOfDay(settings.timeOfDay);
   if (key === 'shadows') env.setShadows(settings.shadows);
+  if (key === 'farView') { if (settings.farView && !farRing && siteData) loadFarView(siteData.site); applyFarView(); }
   if (key === 'weather' || key === 'weatherDate' || key === 'season') applyPreset();
 }
 buildSettingsPanel(panel, settings, onSettingChange);
@@ -527,6 +534,7 @@ const MENU_PAGES = [
       press: () => { settings.preset = settings.preset === 'woods' ? 'open' : 'woods'; applyPreset(); saveSettings(settings); } },
     { label: 'Headlamp', value: () => onOff(headlampOn), enabled: () => isNight(), press: () => toggleHeadlamp() },
     { label: 'Shadows', value: () => onOff(settings.shadows), press: () => changeSetting('shadows', !settings.shadows) },
+    { label: 'Far view (photos, far hills)', value: () => onOff(settings.farView), press: () => changeSetting('farView', !settings.farView) },
     { label: 'Trees', value: () => settings.vegetation[0].toUpperCase() + settings.vegetation.slice(1),
       press: (d) => changeSetting('vegetation', cycle(['off', 'low', 'medium', 'high'], settings.vegetation, d)) },
     { label: 'Nature sounds', value: () => `${Math.round(settings.ambientVolume * 100)}%`,
@@ -1216,9 +1224,10 @@ function buildCoursePanel(index, sites = []) {
     sitePick.value = siteId;
     // A site is a whole new world: reload with it.
     sitePick.addEventListener('change', () => {
+      if (sitePick.value === siteId) return;
       const q = new URLSearchParams(location.search);
       q.set('site', sitePick.value);
-      q.delete('course');
+      for (const k of ['course', 'at', 'size', 'name', 'rebuild']) q.delete(k);
       location.search = q.toString();
     });
     coursePanel.append(sh, sitePick);
@@ -1284,7 +1293,7 @@ function buildCoursePanel(index, sites = []) {
   builder.className = 'note';
   const link = Object.assign(document.createElement('a'), { href: 'builder.html', textContent: 'Site builder' });
   link.style.color = '#ffd27a';
-  builder.append(link, ': make a site anywhere in the US, or add courses.');
+  builder.append(link, ': pick any spot in the US and explore it right away, or build a permanent site with courses.');
   coursePanel.append(h, select, seedRow, nightRow, startBtn, endBtn, reviewBtn, note, builder);
 }
 
@@ -1493,12 +1502,66 @@ async function loadSiteIndex() {
   }
 }
 
+// ?at=lat,lon[&size=m][&name=...]: a site built here in the browser (src/instant-site.js),
+// or the copy the browser kept from last time.
+async function loadInstantSite(at) {
+  const [lat, lon] = at.split(',').map(Number);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error(`"at=${at}" should be latitude,longitude`);
+  const size = [1000, 1500, 2000, 3000].includes(Number(params.get('size'))) ? Number(params.get('size')) : 2000;
+  const key = cacheKey(lat, lon, size);
+  let built = params.has('rebuild') ? null : await loadCachedSite(key);
+  if (built && params.get('name')) built.site.name = params.get('name');
+  if (!built) {
+    setStatus('Building this place from USGS, NLCD and OpenStreetMap data (about half a minute) ...');
+    built = await buildInstantSite({ lat, lon, size, name: params.get('name') || '', onProgress: (t) => setStatus(`Building: ${t}`) });
+    saveCachedSite(key, built);
+  }
+  const d = instantSiteData(built);
+  const mapTexture = new THREE.CanvasTexture(built.mapCanvas);
+  return { data: d, mapTexture, features: d.features, landcover: d.landcover, farField: d.farField };
+}
+
+// ---- The far view: aerial photographs on distant ground, terrain to the horizon ----
+
+async function loadFarView(site, farFieldIn) {
+  if (site.synthetic || farRing) return;
+  try {
+    await loadSkirtAerial(site);
+  } catch (err) {
+    console.warn('No aerial photographs:', err.message);
+  }
+  try {
+    let far = site.far, field = farFieldIn;
+    if (!field) ({ far, field } = await loadFarField(site));
+    const tex = await fetchFarAerial(site, far).catch(() => null);
+    farRing = buildFarRing(site, far, field, tex);
+    scene.add(farRing);
+    camera.far = 45000;
+    camera.updateProjectionMatrix();
+  } catch (err) {
+    console.warn('No far terrain:', err.message);
+  }
+  applyFarView();
+}
+function applyFarView() {
+  const on = settings.farView;
+  if (farRing) farRing.visible = on;
+  GROUND_FX.aerialBox.value.w = on && GROUND_FX.aerial.value.image?.width > 1 ? 1 : 0;
+  applyPreset();
+}
+
 async function start() {
   const sites = await loadSiteIndex();
+  const at = params.get('at');
+  let instant = null;
+  if (at) {
+    instant = await loadInstantSite(at);
+    siteId = instant.data.site.id;
+  }
   siteId ||= sites[0]?.id || 'demo-synthetic';
-  setStatus(`Loading site "${siteId}" ...`);
+  if (!instant) setStatus(`Loading site "${siteId}" ...`);
   const base = `sites/${encodeURIComponent(siteId)}`;
-  const [data, mapTexture] = await Promise.all([loadSite(base), loadMapTexture(base)]);
+  const [data, mapTexture] = instant ? [instant.data, instant.mapTexture] : await Promise.all([loadSite(base), loadMapTexture(base)]);
   env.site = data.site;
   env.offsetMin = guessUtcOffsetMin(data.site.center_lon, new Date());
   weatherService = new WeatherService(data.site);
@@ -1513,8 +1576,8 @@ async function start() {
   }
   mapImage = mapTexture.image;
   lastRun = loadLastRun(data.site.id);
-  const features = await loadFeatures(base, data.site);
-  landcover = await loadLandCover(base, data.site);
+  const features = instant ? instant.features : await loadFeatures(base, data.site);
+  landcover = instant ? instant.landcover : await loadLandCover(base, data.site);
   // With land cover data the campground's thinner canopy is already in it.
   featureIndex = features ? new FeatureIndex(features, landcover ? { areaDensity: { campground: 1 } } : {}) : null;
   const vegSeed = hashString(data.site.id);
@@ -1544,7 +1607,8 @@ async function start() {
   for (const hand of ['left', 'right']) if (hands[hand].grip) tools.attach(hand, hands[hand]);
   applyPreset(); // night tint and compass lume for the tools just made
   siteData = data;
-  buildCoursePanel(await loadCourseIndex(base), sites);
+  buildCoursePanel(instant ? [] : await loadCourseIndex(base), instant ? [...sites, { id: siteId, name: `${data.site.name} (built here)` }] : sites);
+  if (settings.farView) loadFarView(data.site, instant?.farField);
   mountWrist();
   if (debug && params.get('beacon')) {
     const [bx, bz] = params.get('beacon').split(',').map(Number);
@@ -1604,7 +1668,7 @@ async function start() {
   // to run it at night.
   const want = params.get('course');
   if (want) {
-    const index = await loadCourseIndex(base);
+    const index = instant ? [] : await loadCourseIndex(base);
     const listed = index.find((c) => c.id === want);
     const opts = { night: params.has('night') };
     if (listed) await startCourse(await loadCourse(base, listed.file), opts);

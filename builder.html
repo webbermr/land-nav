@@ -72,6 +72,8 @@
         </label>
         <label class="row"><span>Go to</span><input type="text" id="goto" placeholder="lat, lon  e.g. 38.551, -78.316"></label>
         <div class="status" id="square-status">No square yet.</div>
+        <button type="button" class="primary" id="explore-now" disabled>Explore it now, in this browser</button>
+        <p class="note">Builds the square right here from USGS elevation, NLCD land cover and OpenStreetMap, in about half a minute, then opens it. Nothing goes to GitHub and nothing is saved to the repository; the browser keeps a copy so it opens faster next time. Courses are generated (Course panel: New random course). For a permanent site with fixed courses, send a build below.</p>
         <h2>Course start</h2>
         <button type="button" class="act" id="place-start" aria-pressed="false">Place the start</button>
         <button type="button" class="act" id="clear-start">Clear</button>

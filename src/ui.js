@@ -13,6 +13,7 @@ const FIELDS = [
   { key: 'timeOfDay', label: 'Time of day (sun)', type: 'select',
     options: [[-1, 'Now'], ...Array.from({ length: 24 }, (_, h) => [h * 60, `${String(h).padStart(2, '0')}:00`])] },
   { key: 'shadows', label: 'Shadows', type: 'checkbox' },
+  { key: 'farView', label: 'Far view (aerial photos, far hills)', type: 'checkbox' },
   { key: 'weather', label: 'Weather', type: 'select', text: true,
     options: [['live', 'Live (now)'], ['replay', 'Replay a day'], ['clear', 'Clear'], ['partly', 'Partly cloudy'], ['overcast', 'Overcast'],
       ['fog', 'Fog'], ['drizzle', 'Drizzle'], ['rain', 'Rain'], ['storm', 'Thunderstorm'], ['snow', 'Snow'], ['blizzard', 'Blizzard']] },

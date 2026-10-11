@@ -193,6 +193,7 @@ function update(redrawCourses = true) {
   lastRequest = errors.length ? null : request;
   $('errors').replaceChildren(...errors.map((t) => Object.assign(document.createElement('li'), { textContent: t })));
   $('send').disabled = errors.length > 0;
+  $('explore-now').disabled = state.mode !== 'new' || !state.center;
   $('json').textContent = JSON.stringify(request, null, 2);
   $('cli').textContent = cliCommands(request).join('\n\n');
 }
@@ -251,6 +252,15 @@ $('goto').addEventListener('change', () => {
   map.setView([lat, lon], 14);
   if (state.mode === 'new') { state.center = { lat, lon }; update(false); }
 });
+// Explore the square straight away: the app builds it in the browser (src/instant-site.js).
+$('explore-now').addEventListener('click', () => {
+  if (!state.center) return;
+  const q = new URLSearchParams({ at: `${state.center.lat.toFixed(5)},${state.center.lon.toFixed(5)}`, size: $('size').value });
+  const name = $('site-name').value.trim();
+  if (name) q.set('name', name);
+  location.href = `./?${q}`;
+});
+
 $('send').addEventListener('click', () => {
   if (lastRequest) window.open(issueUrl(lastRequest), '_blank', 'noopener');
 });

@@ -10,6 +10,13 @@ Example:
         --id bull-run --name "Bull Run" \\
         --declination -10.6 --declination-date 2026-10-01
 
+Or let it download the elevation itself (USGS 3DEP; see tools/fetch_usgs.py), and
+add real tree cover from the National Land Cover Database:
+
+    python3 tools/make_site.py --fetch-dem --landcover \\
+        --lat 38.764 --lon -78.296 --id my-site --name "My Site" \\
+        --declination -10.0 --declination-date 2026-10-11
+
 Declination comes from the NOAA magnetic field calculator for the site and date
 (https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml). Enter east as
 positive, west as negative.
@@ -492,7 +499,10 @@ def rerender_map(site_dir, relief=False):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--dem", nargs="+", required=True, help="DEM GeoTIFF(s). Earlier files win where they overlap.")
+    p.add_argument("--dem", nargs="+", help="DEM GeoTIFF(s). Earlier files win where they overlap.")
+    p.add_argument("--fetch-dem", action="store_true", help="Download elevation from USGS 3DEP instead of --dem")
+    p.add_argument("--landcover", action="store_true", help="Also download NLCD land cover and tree canopy (make_landcover.py)")
+    p.add_argument("--cache", help="Where downloads are kept (default ~/.cache/land-nav)")
     p.add_argument("--lat", type=float, required=True, help="Center latitude (WGS84)")
     p.add_argument("--lon", type=float, required=True, help="Center longitude (WGS84)")
     p.add_argument("--id", required=True, help="Site ID, used as the folder name")
@@ -513,6 +523,8 @@ def main(argv=None):
     p.add_argument("--synthetic", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "sites"))
     a = p.parse_args(argv)
+    if bool(a.dem) == bool(a.fetch_dem):
+        raise SystemExit("Give either --dem files or --fetch-dem")
 
     if a.size % a.spacing:
         raise SystemExit("--size must be a multiple of --spacing")
@@ -529,6 +541,21 @@ def main(argv=None):
     n_north = snap(cn + a.size / 2, 10)
     gzd, sq = check_single_square(to_ll, e_west, n_north, a.size)
 
+    sgrid = int(round(a.skirt_size / a.skirt_spacing)) + 1
+    s_e_west = snap(e_west + a.size / 2 - a.skirt_size / 2, a.skirt_spacing)
+    s_n_north = snap(n_north - a.size / 2 + a.skirt_size / 2, a.skirt_spacing)
+    surveys = []
+    if a.fetch_dem:
+        import fetch_usgs
+        cache = Path(a.cache) if a.cache else fetch_usgs.default_cache()
+        print("Downloading elevation from USGS 3DEP ...")
+        a.dem = [str(p) for p in fetch_usgs.fetch_site_dem(
+            utm.to_epsg(), e_west, n_north, a.size, a.spacing,
+            s_e_west, s_n_north, a.skirt_size, a.skirt_spacing, cache)]
+        (lo0, la1), (lo1, la0) = to_ll.transform(e_west, n_north), to_ll.transform(e_west + a.size, n_north - a.size)
+        surveys = fetch_usgs.lidar_surveys(lo0, la0, lo1, la1)
+        print("  lidar surveys here: " + (", ".join(surveys) if surveys else "(could not list them)"))
+
     grid = int(round(a.size / a.spacing)) + 1
     print(f"Resampling playable area: {grid} x {grid} at {a.spacing:g} m ...")
     play = resample_to_grid(a.dem, utm, e_west, n_north, a.spacing, grid)
@@ -539,9 +566,6 @@ def main(argv=None):
             "DEM tiles and pass them all to --dem."
         )
 
-    sgrid = int(round(a.skirt_size / a.skirt_spacing)) + 1
-    s_e_west = snap(e_west + a.size / 2 - a.skirt_size / 2, a.skirt_spacing)
-    s_n_north = snap(n_north - a.size / 2 + a.skirt_size / 2, a.skirt_spacing)
     print(f"Resampling skirt: {sgrid} x {sgrid} at {a.skirt_spacing:g} m ...")
     skirt = resample_to_grid(a.dem, utm, s_e_west, s_n_north, a.skirt_spacing, sgrid)
     skirt_missing = np.isnan(skirt).mean()
@@ -596,7 +620,8 @@ def main(argv=None):
         "contour_interval_m": a.contour_interval,
         "index_contour_interval_m": a.index_interval,
         "map": layout,
-        "sources": [Path(d).name for d in a.dem],
+        "sources": (["USGS 3DEP elevation service"] + [f"lidar: {s}" for s in surveys]) if a.fetch_dem
+        else [Path(d).name for d in a.dem],
     }
     if a.synthetic:
         site["synthetic"] = True
@@ -613,8 +638,20 @@ def main(argv=None):
     features = json.loads(feats_path.read_text()) if feats_path.exists() else None
     render_map(out / "map.png", play, site, layout, a.contour_interval, a.index_interval, a.relief, features)
 
+    # Keep what other tools added to an earlier site.json, while their files exist.
+    old_path = out / "site.json"
+    old = json.loads(old_path.read_text()) if old_path.exists() else {}
+    if old.get("features") and (out / "features.json").exists():
+        site["features"] = True
+    if old.get("landcover") and (out / "landcover.bin").exists():
+        site["landcover"] = old["landcover"]
+    if "default_start" not in site and old.get("default_start"):
+        site["default_start"] = old["default_start"]
     (out / "site.json").write_text(json.dumps(site, indent=2) + "\n")
     (out / "courses").mkdir(exist_ok=True)
+    if a.landcover:
+        import make_landcover
+        make_landcover.main(["--site", a.id, "--out", str(Path(a.out))] + (["--cache", a.cache] if a.cache else []))
 
     side = "EAST" if gm >= 0 else "WEST"
     print()

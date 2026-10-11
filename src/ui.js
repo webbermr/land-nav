@@ -5,6 +5,7 @@ import { saveSettings } from './settings.js';
 // Each field: settings key, label, and the input to build.
 const FIELDS = [
   { key: 'paceCountPer100m', label: 'Pace count per 100 m', type: 'number', min: 30, max: 120, step: 1 },
+  { key: 'jogPaceCountPer100m', label: 'Jogging pace count per 100 m', type: 'number', min: 25, max: 100, step: 1 },
   { key: 'timeScale', label: 'Time compression', type: 'select', options: [[1, '1x'], [2, '2x'], [3, '3x']] },
   { key: 'slopeEffects', label: 'Slope effects', type: 'checkbox' },
   { key: 'footfallVolume', label: 'Footstep volume', type: 'range', min: 0, max: 1, step: 0.05 },

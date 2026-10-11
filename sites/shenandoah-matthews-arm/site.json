@@ -48,5 +48,16 @@
     "x": 921.2,
     "z": 1100.8
   },
-  "features": true
+  "features": true,
+  "landcover": {
+    "grid": 201,
+    "spacing_m": 10,
+    "year": 2021,
+    "source": "NLCD 2021 Land Cover and Tree Canopy Cover (USGS, MRLC, USDA Forest Service)",
+    "summary": {
+      "forest": 0.99,
+      "developed": 0.01
+    },
+    "mean_canopy": 0.871
+  }
 }

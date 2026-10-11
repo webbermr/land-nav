@@ -144,9 +144,12 @@ const LOG_HALF = 2.5, LOG_R = 0.22, ROCK_R = 0.9;
 
 export class Vegetation {
   // densityAt(x, z): optional 0..1 multiplier from site features (no trees on roads).
-  constructor(scene, terrain, site, settings, { densityAt } = {}) {
+  // coverAt(x, z, slope), evergreenAt(x, z): optional real land cover (landcover.js).
+  constructor(scene, terrain, site, settings, { densityAt, coverAt, evergreenAt } = {}) {
     this.terrain = terrain;
     this.densityAt = densityAt;
+    this.coverFn = coverAt;
+    this.evergreenAt = evergreenAt;
     this.site = site;
     this.settings = settings;
     this.seed = hashString(site.id);
@@ -196,7 +199,8 @@ export class Vegetation {
 
   // Tree cover at a point, for colouring the ground to match.
   coverAt(x, z) {
-    const c = forestCover(this.seed, x, z, this.slope(x, z));
+    const s = this.slope(x, z);
+    const c = this.coverFn ? this.coverFn(x, z, s) : forestCover(this.seed, x, z, s);
     return this.densityAt ? c * this.densityAt(x, z) : c;
   }
 
@@ -227,6 +231,7 @@ export class Vegetation {
       v = fn(tx, tz, {
         seed: this.seed, density: this.density, size: this.terrain.size,
         slopeAt: (x, z) => this.slope(x, z), exclude: this.exclude, densityAt: this.densityAt,
+        coverAt: this.coverFn, evergreenAt: this.evergreenAt,
       });
       for (const t of v) t.y = this.terrain.heightAt(t.x, t.z);
       cache.set(key, v);

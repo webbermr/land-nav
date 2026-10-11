@@ -22,6 +22,7 @@ import { Vegetation, VEGETATION_QUALITY } from './vegetation.js';
 import { forestCover, hashString } from './vegetation-logic.js';
 import { createSky, SKY } from './sky.js';
 import { loadFeatures, buildFeatures } from './features.js';
+import { LandCover, landcoverCover, NLCD_NAMES } from './landcover.js';
 import { FeatureIndex, stakeAvoider } from './features-logic.js';
 import { resolveCollisions } from './collision.js';
 import { analyzeRun, buildRunExport } from './aar-logic.js';
@@ -139,11 +140,14 @@ const vignette = createVignette();
 camera.add(vignette.mesh);
 
 let fly = false;
+let xrJog = false;    // VR: jog toggled with a tap on the left stick press
+let xrStillSec = 0;
 let terrain = null;
 let tools = null;
 let beacon = null;
 let siteData = null;   // { site, field, ... } from loadSite
 let featureIndex = null; // roads, buildings etc. from features.json, if the site has one
+let landcover = null;    // NLCD tree cover (landcover.js), if the site has it
 let mapImage = null;     // map.png, for the review board
 let lastRun = null;      // the last finished run (buildRunExport), for the review
 const reviewBoard = createReviewBoard();
@@ -301,7 +305,7 @@ function togglePanel() {
   }
 }
 buildSettingsPanel(panel, settings, (key) => {
-  if (key === 'paceCountPer100m') loco.pace.reset();
+  if (key === 'paceCountPer100m' || key === 'jogPaceCountPer100m') loco.pace.reset();
   if (key === 'vegetation') applyCanopyRange();
 });
 
@@ -376,7 +380,8 @@ function updateDesktop(dt) {
     return;
   }
 
-  const step = loco.step(dt, ground, player.position.x, player.position.z, dirX, dirZ, 1);
+  // Shift: fly faster when flying, jog when walking.
+  const step = loco.step(dt, ground, player.position.x, player.position.z, dirX, dirZ, 1, input.isDown('fast'));
   player.position.x += step.dx;
   player.position.z += step.dz;
   player.position.y = terrain.heightAt(player.position.x, player.position.z);
@@ -400,7 +405,10 @@ function updateXR(dt) {
   const rx = -fwd.z, rz = fwd.x;
   const dirX = fwd.x * stick.y + rx * stick.x;
   const dirZ = fwd.z * stick.y + rz * stick.x;
-  const step = loco.step(dt, ground, head.x, head.z, dirX, dirZ, stick.mag);
+  // Jog (left stick press) lasts until you've let go of the stick for a moment.
+  if (stick.mag > 0) xrStillSec = 0;
+  else if ((xrStillSec += dt) > 1) xrJog = false;
+  const step = loco.step(dt, ground, head.x, head.z, dirX, dirZ, stick.mag, xrJog);
   player.position.x += step.dx;
   player.position.z += step.dz;
   head.x += step.dx;
@@ -649,7 +657,7 @@ function courseTick(dt, x, z, moving) {
   }
   if (!run) return;
   const wasRunning = run.state === 'running';
-  run.update(dt, { x, z }, { moving, mapOut: tools?.map.group.visible, compassOut: tools?.compass.group.visible });
+  run.update(dt, { x, z }, { moving, mapOut: tools?.map.group.visible, compassOut: tools?.compass.group.visible, jog: moving && loco.lastGait === 'jog' });
   if (wasRunning && run.state === 'ended') {
     setCardShown(true);
     showToast(`Time is up: ${run.result.correct}/${run.result.total} correct, ${run.result.pass ? 'PASS' : 'FAIL'}.`);
@@ -677,7 +685,10 @@ function holdButton(hand, button, holdSec, { onTap, onHold }) {
 
 function updateXRCourseControls() {
   if (xrInput.justPressed('left', 'primary')) setCardShown(!wrist.cardShown);
-  holdButton('left', 'stick', 1, { onHold: () => { showMyPosition(); xrInput.pulse('left', 0.6, 60); } });
+  holdButton('left', 'stick', 1, {
+    onTap: () => { xrJog = !xrJog; xrStillSec = 0; xrInput.pulse('left', xrJog ? 0.4 : 0.15, 20); },
+    onHold: () => { showMyPosition(); xrInput.pulse('left', 0.6, 60); },
+  });
   if (xrInput.justPressed('left', 'trigger') && settings.night) { toggleHeadlamp(); xrInput.pulse('left', 0.2, 15); }
   // B shows or hides the review table (with the map up, B is the protractor).
   if (xrInput.justPressed('right', 'secondary') && !tools?.map.group.visible && lastRun) {
@@ -871,7 +882,7 @@ function updateHud(dt) {
     fpsTime = 0;
   }
   const info = renderer.info.render;
-  const mode = fly ? 'FLY' : 'WALK';
+  const mode = fly ? 'FLY' : loco.lastSpeed > 0 && loco.lastGait === 'jog' ? 'JOG' : loco.tooSteepToJog ? 'WALK (too steep to jog)' : 'WALK';
   const lines = [
     `${mode}  ${settings.preset}${settings.night ? `  NIGHT (headlamp ${headlampOn ? 'on' : 'off'})` : ''}  ${fps.toFixed(0)} fps  ${info.calls} calls  ${(info.triangles / 1000).toFixed(0)}k tris`,
   ];
@@ -884,7 +895,8 @@ function updateHud(dt) {
     if (vegetation) {
       const v = vegetation.stats;
       const surface = featureIndex?.surfaceAt(player.position.x, player.position.z);
-      lines.push(`trees ${v.near} near, ${v.cut} far, ${v.clutter} ground  cover ${vegetation.coverAt(player.position.x, player.position.z).toFixed(2)}${surface ? `  on ${surface}` : ''}`);
+      const lc = landcover ? `  ${NLCD_NAMES[landcover.classAt(player.position.x, player.position.z)] ?? 'no class'}` : '';
+      lines.push(`trees ${v.near} near, ${v.cut} far, ${v.clutter} ground  cover ${vegetation.coverAt(player.position.x, player.position.z).toFixed(2)}${lc}${surface ? `  on ${surface}` : ''}`);
     }
     const c = compassDebug();
     if (c) lines.push(c);
@@ -974,6 +986,17 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
+async function loadLandCover(base, site) {
+  if (!site.landcover) return null;
+  try {
+    const res = await fetch(dataUrl(`${base}/landcover.bin`));
+    return res.ok ? new LandCover(await res.arrayBuffer(), site.landcover) : null;
+  } catch (err) {
+    console.warn('Land cover not loaded; trees fall back to noise.', err);
+    return null;
+  }
+}
+
 async function loadSiteIndex() {
   try {
     const res = await fetch(dataUrl('sites/index.json'));
@@ -992,14 +1015,22 @@ async function start() {
   mapImage = mapTexture.image;
   lastRun = loadLastRun(data.site.id);
   const features = await loadFeatures(base, data.site);
+  landcover = await loadLandCover(base, data.site);
+  // With land cover data the campground's thinner canopy is already in it.
+  featureIndex = features ? new FeatureIndex(features, landcover ? { areaDensity: { campground: 1 } } : {}) : null;
   const vegSeed = hashString(data.site.id);
-  featureIndex = features ? new FeatureIndex(features) : null;
+  // Tree cover from real land cover data where the site has it, else from noise.
+  const coverFn = landcover
+    ? (x, z, slope) => landcoverCover(landcover, vegSeed, x, z, slope)
+    : (x, z, slope) => forestCover(vegSeed, x, z, slope);
   // No trees on roads, trails, parking or around buildings; fewer in the campground.
   const densityAt = featureIndex ? (x, z) => featureIndex.density(x, z) : undefined;
   terrain = buildTerrain(renderer, data, {
-    coverAt: (x, z, slope) => forestCover(vegSeed, x, z, slope) * (densityAt ? densityAt(x, z) : 1),
+    coverAt: (x, z, slope) => coverFn(x, z, slope) * (densityAt ? densityAt(x, z) : 1),
   });
-  vegetation = new Vegetation(scene, terrain, data.site, settings, { densityAt });
+  vegetation = new Vegetation(scene, terrain, data.site, settings, {
+    densityAt, coverAt: landcover ? coverFn : undefined, evergreenAt: landcover ? (x, z) => landcover.evergreenAt(x, z) : undefined,
+  });
   applyCanopyRange();
   scene.add(terrain.group);
   scene.add(buildFeatures(features, data.field));
@@ -1047,9 +1078,10 @@ async function start() {
 
   // Exposed for automated checks and console poking. Not a gameplay API.
   window.__landnav = {
-    camera, player, terrain, site: data.site, field: data.field, renderer, scene, settings, loco, input, tools, beacon, wrist, startCourse, vegetation, featureIndex, collide,
+    camera, player, terrain, site: data.site, field: data.field, renderer, scene, settings, loco, input, tools, beacon, wrist, startCourse, vegetation, featureIndex, landcover, collide,
     get run() { return run; },
     get lastRun() { return lastRun; },
+    get xrJog() { return xrJog; },
     headlamp, setNight, toggleHeadlamp, get headlampOn() { return headlampOn; },
     showReview, hideReview, reviewBoard,
   };

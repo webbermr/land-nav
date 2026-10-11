@@ -24,6 +24,10 @@ A pass needs at least the course's pass threshold of right codes, inside the tim
 
 Below that come the result, total time, distance against ideal, how long the map and compass were out, and your pace count as it worked out on this terrain. **Download run (JSON)** saves everything: the course, the 1 s track, events, tool times, bead presses, result and settings. The last run is kept in browser storage, so **Course → Review last run** brings it back after a reload.
 
+**M6 (stretch): automatic elevation download and land cover built.** See "Build a site" below. The shared course format with the iOS trainer and GPX import aren't started.
+
+**Jog:** hold **Shift** on desktop, or tap the **left stick press** in VR (it ends once you let go of the stick for a second). Jogging is 2.7 m/s (about a 10-minute mile) with its own pace count, 52 per 100 m by default (Settings: "Jogging pace count"), because your stride is longer. Footfalls and the left-hand pulse follow that count while you jog. On grades steeper than 25%, up or down, you walk whatever you ask for, and the HUD says so. The review shows how much of each leg you jogged. If the run mixed gaits, it says so rather than turning the bead error into a single pace count.
+
 **M5 (realism): night mode built, awaiting a headset check; walk-in-place not started.** Slope effects, the woods and open presets, trees and collision were already in. At night:
 
 - The sky is dark and tree silhouettes fade out by about 60 m.
@@ -84,20 +88,22 @@ WebXR needs HTTPS, so the headset uses the GitHub Pages build: **https://webberm
 
 ## Build a site from USGS data
 
-1. Download a DEM GeoTIFF from the [National Map downloader](https://apps.nationalmap.gov/downloader/). Prefer the 1 m lidar DEM; fall back to 1/3 arc-second.
-2. Look up the declination for the site and date with the [NOAA magnetic field calculator](https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml). East is positive, west is negative.
-3. Run the pipeline:
+1. Look up the declination for the site and date with the [NOAA magnetic field calculator](https://www.ngdc.noaa.gov/geomag/calculators/magcalc.shtml). East is positive, west is negative.
+2. Run the pipeline. With `--fetch-dem` it downloads the elevation itself, and `--landcover` adds real tree cover:
 
 ```sh
 pip install -r tools/requirements.txt
-python3 tools/make_site.py \
-    --dem USGS_1M_18_x28y431.tif \
+python3 tools/make_site.py --fetch-dem --landcover \
     --lat 38.866 --lon -77.459 \
     --id my-site --name "My Site" \
     --declination -10.6 --declination-date 2026-10-01
 ```
 
-Pass several `--dem` files if the area spans tiles or one survey has gaps; earlier files win where they overlap. `--start-lat/--start-lon/--start-name` set a default course start such as a trailhead. List the site in `sites/index.json` to offer it in the app. The script refuses a playable area that crosses a UTM zone or MGRS 100 km square, or that has holes in the elevation data. It prints the G-M angle and which way to convert. **Read that line.** A declination with the wrong sign silently ruins every azimuth.
+**`--fetch-dem`** asks the [USGS 3DEP elevation service](https://elevation.nationalmap.gov/arcgis/rest/services/3DEPElevation/ImageServer) for exactly the site's box, in its UTM zone. It gets the playable square at 1 m and the skirt at 30 m. The service serves the best data it has, which is 1 m lidar where it exists. That's about 17 MB for a 2 km site, instead of several 10 km lidar tiles at 300 to 500 MB each. The [National Map product API](https://tnmaccess.nationalmap.gov/api/v1/docs) supplies the names of the lidar surveys underneath for `site.json`'s source list. Downloads are cached in `~/.cache/land-nav` (`--cache` to change). Rebuilding Matthews Arm this way matched the hand-built site to 0.17 m RMS (largest difference 1.35 m), with the same corner and G-M angle.
+
+**`--landcover`** (or `tools/make_landcover.py --site my-site` on an existing site) downloads the [NLCD](https://www.mrlc.gov/) 2021 land cover and tree canopy cover, both 30 m and public domain. It resamples them onto a 10 m grid in `landcover.bin`. The app then puts trees where the canopy really is, with conifers where NLCD says evergreen or mixed forest, and noise only adds texture finer than 30 m. Sites without it keep the noise forest. Matthews Arm comes out 99% forest at 87% mean canopy, with gaps on the campground loops, the parking lots and Matthews Arm Road. NLCD covers the lower 48 states only.
+
+To use files you downloaded yourself instead, from the [National Map downloader](https://apps.nationalmap.gov/downloader/) (prefer the 1 m lidar DEM), pass them with `--dem USGS_1M_18_x28y431.tif`. Pass several `--dem` files if the area spans tiles or one survey has gaps; earlier files win where they overlap. `--start-lat/--start-lon/--start-name` set a default course start such as a trailhead. List the site in `sites/index.json` to offer it in the app. The script refuses a playable area that crosses a UTM zone or MGRS 100 km square, or that has holes in the elevation data. It prints the G-M angle and which way to convert. **Read that line.** A declination with the wrong sign silently ruins every azimuth.
 
 `--relief` adds light hillshade to the map. It's off by default because it makes terrain association too easy.
 
@@ -181,12 +187,15 @@ src/features-logic.js OSM features: tree clearing, stake avoidance (pure, tested
 src/features.js       roads, trails, streams, parking, buildings in the world
 src/collision.js      walker vs trunks, logs, rocks, buildings (pure, tested)
 src/sky.js            gradient sky dome
+src/landcover.js      NLCD land cover: canopy, conifer share, class (pure, tested)
 src/night.js          night sky, red headlamp, red-light tint for what you read
 src/settings.js       every tunable number, persisted when storage allows
 src/main.js           renderer, player rig, desktop and VR loops
-sites/<id>/           site.json, height.bin, skirt.bin, map.png, features.json, courses/
+sites/<id>/           site.json, height.bin, skirt.bin, map.png, features.json, landcover.bin, courses/
 tools/make_site.py    DEM GeoTIFF -> site folder
 tools/make_features.py OpenStreetMap export -> features.json and map symbols
+tools/fetch_usgs.py   downloads: 3DEP elevation, lidar survey names, NLCD land cover
+tools/make_landcover.py NLCD land cover and tree canopy -> landcover.bin
 vendor/three/         three.js r186, unmodified
 ```
 

@@ -59,9 +59,11 @@ export const SPECIES = Object.freeze(['oak', 'conifer', 'sapling']);
 // [{ x, z, species, scale, rot, tint }].
 // opts: { seed, density (0..1 preset multiplier), slopeAt(x,z), size (area metres),
 //         spacing (metres between candidates), exclude: [{x,z}], excludeR,
-//         densityAt(x,z) (optional 0..1 multiplier: roads, campground) }
+//         densityAt(x,z) (optional 0..1 multiplier: roads, campground),
+//         coverAt(x,z,slope) and evergreenAt(x,z) (optional: real land cover data,
+//         in place of the noise) }
 export function tileTrees(tx, tz, opts) {
-  const { seed, density = 1, slopeAt, size, spacing = 6.5, exclude = [], excludeR = 4, densityAt } = opts;
+  const { seed, density = 1, slopeAt, size, spacing = 6.5, exclude = [], excludeR = 4, densityAt, coverAt, evergreenAt } = opts;
   const out = [];
   const n = Math.round(TILE_M / spacing);
   const step = TILE_M / n;
@@ -72,14 +74,17 @@ export function tileTrees(tx, tz, opts) {
       const z = tz * TILE_M + (j + 0.15 + 0.7 * unit(hashInts(h, 2))) * step;
       if (x < 0 || z < 0 || x > size || z > size) continue;
       const slope = slopeAt(x, z);
-      let p = forestCover(seed, x, z, slope) * density;
+      let p = (coverAt ? coverAt(x, z, slope) : forestCover(seed, x, z, slope)) * density;
       if (densityAt && p > 0) p *= densityAt(x, z);
       if (unit(hashInts(h, 3)) >= p) continue;
       if (exclude.some((e) => (e.x - x) ** 2 + (e.z - z) ** 2 < excludeR * excludeR)) continue;
       const r = unit(hashInts(h, 4));
-      // Hardwoods dominate here; conifers (hemlock, pine) in patches; saplings fill in.
-      const conifery = valueNoise(seed + 99, x, z, 160);
-      const species = r < 0.16 ? 'sapling' : (r < 0.16 + 0.55 * conifery ? 'conifer' : 'oak');
+      // Saplings fill in. Without land cover data: hardwoods dominate, conifers
+      // (hemlock, pine) in noise patches. With it: the conifer share it gives.
+      let species;
+      if (r < 0.16) species = 'sapling';
+      else if (evergreenAt) species = (r - 0.16) / 0.84 < evergreenAt(x, z) ? 'conifer' : 'oak';
+      else species = r < 0.16 + 0.55 * valueNoise(seed + 99, x, z, 160) ? 'conifer' : 'oak';
       out.push({
         x, z, species,
         scale: 0.75 + 0.55 * unit(hashInts(h, 5)),
@@ -94,7 +99,7 @@ export function tileTrees(tx, tz, opts) {
 // Ground clutter near the player: shrubs (more in clearings and at edges), fallen
 // logs (in the forest), rocks (on steep ground). Returns [{ x, z, kind, scale, rot, tint }].
 export function tileClutter(tx, tz, opts) {
-  const { seed, slopeAt, size, exclude = [], excludeR = 2.5, densityAt } = opts;
+  const { seed, slopeAt, size, exclude = [], excludeR = 2.5, densityAt, coverAt } = opts;
   const out = [];
   const n = 8, step = TILE_M / n;
   for (let i = 0; i < n; i++) {
@@ -107,7 +112,7 @@ export function tileClutter(tx, tz, opts) {
       // Nothing on roads and trails; less in the campground.
       if (densityAt && unit(hashInts(h, 8)) >= densityAt(x, z)) continue;
       const slope = slopeAt(x, z);
-      const cover = forestCover(seed, x, z, slope);
+      const cover = coverAt ? coverAt(x, z, slope) : forestCover(seed, x, z, slope);
       const r = unit(hashInts(h, 3));
       let kind = null;
       const edge = 1 - Math.abs(cover - 0.5) * 2; // 1 at the forest edge

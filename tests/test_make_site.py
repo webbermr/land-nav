@@ -46,12 +46,13 @@ class MakeSiteTest(unittest.TestCase):
         ce, cn = Transformer.from_crs("EPSG:4326", f"EPSG:{EPSG}", always_xy=True).transform(LON, LAT)
         dem = tmp / "plane.tif"
         write_plane_dem(dem, ce, cn)
-        make_site.main([
+        cls.args = [
             "--dem", str(dem), "--lat", str(LAT), "--lon", str(LON), "--id", "plane",
             "--declination", "-10.5", "--declination-date", "2026-10-01",
             "--size", "400", "--spacing", "4", "--skirt-size", "1200", "--skirt-spacing", "30",
             "--map-px", "1024", "--out", str(tmp),
-        ])
+        ]
+        make_site.main(cls.args)
         cls.dir = tmp / "plane"
         cls.site = json.loads((cls.dir / "site.json").read_text())
 
@@ -137,6 +138,67 @@ class MakeSiteTest(unittest.TestCase):
         self.assertEqual(len(f["areas"][0]["pts"]), 4)  # closing point dropped
         self.assertEqual(f["points"][0]["name"], "Knob")
         self.assertTrue(json.loads((self.dir / "site.json").read_text())["features"])
+
+
+    def test_landcover_resampled_onto_site_grid(self):
+        import make_landcover
+        # Synthetic NLCD in its native Albers grid: deciduous forest (41, 90% canopy)
+        # west of the site's centre line, pasture (81, 5%) east of it.
+        to_alb = Transformer.from_crs(f"EPSG:{self.site['epsg']}", "EPSG:5070", always_xy=True)
+        s = self.site
+        mid_e = s["e_west"] + s["size_m"] / 2
+        corners = [to_alb.transform(s["e_west"] + dx, s["n_north"] - dz) for dx in (-200, s["size_m"] + 200) for dz in (-200, s["size_m"] + 200)]
+        x0, x1 = min(c[0] for c in corners), max(c[0] for c in corners)
+        y0, y1 = min(c[1] for c in corners), max(c[1] for c in corners)
+        w, h = int((x1 - x0) / 30) + 1, int((y1 - y0) / 30) + 1
+        xs = x0 + (np.arange(w) + 0.5) * 30
+        ys = y1 - (np.arange(h) + 0.5) * 30
+        X, Y = np.meshgrid(xs, ys)
+        to_utm = Transformer.from_crs("EPSG:5070", f"EPSG:{s['epsg']}", always_xy=True)
+        E, _ = to_utm.transform(X, Y)
+        west = E < mid_e
+        tmp = Path(self.tmp.name)
+        for name, val in (("lc.tif", np.where(west, 41, 81)), ("tcc.tif", np.where(west, 90, 5))):
+            with rasterio.open(tmp / name, "w", driver="GTiff", height=h, width=w, count=1, dtype="uint8",
+                               crs="EPSG:5070", transform=from_origin(x0, y1, 30, 30)) as dst:
+                dst.write(val.astype(np.uint8), 1)
+        classes, canopy = make_landcover.resample(s, tmp / "lc.tif", tmp / "tcc.tif")
+        g = int(s["size_m"] / 10) + 1
+        self.assertEqual(classes.shape, (g, g))
+        # Well away from the boundary (and a 30 m cell), each side is pure.
+        self.assertTrue((classes[:, : g // 2 - 4] == 41).all())
+        self.assertTrue((classes[:, g // 2 + 4:] == 81).all())
+        self.assertTrue((canopy[:, : g // 2 - 4] == 90).all())
+        self.assertTrue((canopy[:, g // 2 + 4:] == 5).all())
+        make_landcover.write(self.dir, dict(s), classes, canopy)
+        data = (self.dir / "landcover.bin").read_bytes()
+        self.assertEqual(len(data), 2 * g * g)
+        site = json.loads((self.dir / "site.json").read_text())
+        self.assertEqual(site["landcover"]["grid"], g)
+        self.assertAlmostEqual(site["landcover"]["summary"]["forest"] + site["landcover"]["summary"]["grass/field"], 1, places=3)
+        # Rebuilding the site keeps the land cover (and features) other tools added.
+        (self.dir / "features.json").write_text('{"lines":[],"areas":[],"points":[]}')
+        site["features"] = True
+        (self.dir / "site.json").write_text(json.dumps(site))
+        make_site.main(self.args)
+        again = json.loads((self.dir / "site.json").read_text())
+        self.assertEqual(again["landcover"], site["landcover"])
+        self.assertTrue(again["features"])
+
+
+class FetchHelpersTest(unittest.TestCase):
+    def test_tiles_cover_the_box_within_the_size_limit(self):
+        import fetch_usgs
+        t = fetch_usgs.tiles(0, 0, 9000, 5000, 1, max_px=4000)
+        self.assertEqual(len(t), 6)
+        self.assertAlmostEqual(sum((x1 - x0) * (y1 - y0) for x0, y0, x1, y1 in t), 9000 * 5000)
+        self.assertTrue(all(x1 - x0 <= 4000 and y1 - y0 <= 4000 for x0, y0, x1, y1 in t))
+        self.assertEqual(fetch_usgs.tiles(0, 0, 6000, 6000, 30), [(0, 0, 6000, 6000)])
+
+    def test_survey_names(self):
+        import fetch_usgs
+        self.assertEqual(fetch_usgs.survey_name("USGS 1 Meter 17 x73y430 VA_NorthernShenandoah_2020_D20"), "VA_NorthernShenandoah_2020_D20")
+        self.assertEqual(fetch_usgs.survey_name("USGS one meter x73y430 VA Shenandoah 2014"), "VA Shenandoah 2014")
 
 
 class GuardsTest(unittest.TestCase):

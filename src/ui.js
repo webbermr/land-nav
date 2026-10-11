@@ -14,6 +14,7 @@ const FIELDS = [
   { key: 'units', label: 'Compass lens units', type: 'select', options: [['deg', 'Degrees'], ['mils', 'Mils']], text: true },
   { key: 'compassTiltSticks', label: 'Dial sticks when tilted', type: 'checkbox' },
   { key: 'assisted', label: 'Assisted map readout', type: 'checkbox' },
+  { key: 'lostHelp', label: "Allow 'show my position' (K / hold left stick)", type: 'checkbox' },
 ];
 
 export function buildSettingsPanel(container, settings, onChange) {

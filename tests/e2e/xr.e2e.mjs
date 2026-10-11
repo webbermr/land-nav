@@ -279,6 +279,41 @@ await check('M3 desktop: the clock runs out; a generated course from a seed', as
   await hudSays(/Time is up/);
 });
 
+await check('Lost lifeline (desktop): K shows a brief, counted "you are here"; can be switched off', async () => {
+  const c = await page.evaluate(() => window.__t.course('day-2'));
+  await page.evaluate(([x, z]) => {
+    window.__t.goTo(x, z);
+    const l = window.__landnav;
+    l.input.yaw = -Math.PI / 2; // facing grid east
+    l.settings.lostHelpSec = 1.5;
+  }, [c.start.x + 120, c.start.z - 40]);
+  await page.keyboard.press('KeyK');
+  await hudSays(/You are here.*Used 1 time/);
+  const r = await page.evaluate(() => {
+    const { tools, run, player } = window.__landnav;
+    const here = tools.map.here;
+    const b = tools.map.boardOf({ x: player.position.x, z: player.position.z });
+    return { map: tools.desktopMap, v: here.visible, dx: here.position.x - b.bx, dy: here.position.y - b.by, rot: here.rotation.z, reveals: run.reveals, ev: run.log.events.filter((e) => e.type === 'reveal').length };
+  });
+  assert.ok(r.map && r.v, 'map opened with the mark');
+  assert.ok(Math.hypot(r.dx, r.dy) < 1e-9, 'mark at the true position');
+  assert.ok(Math.abs(r.rot + Math.PI / 2) < 1e-6, `arrow points east, rot ${r.rot}`);
+  assert.equal(r.reveals, 1);
+  assert.equal(r.ev, 1, 'logged for the AAR');
+  await page.waitForFunction(() => !window.__landnav.tools.map.here.visible, null, { timeout: 30000, polling: 50 });
+  await page.evaluate(() => { window.__landnav.settings.lostHelp = false; });
+  await page.keyboard.press('KeyK');
+  await hudSays(/switched off in Settings/);
+  assert.equal(await page.evaluate(() => window.__landnav.run.reveals), 1);
+  // It shows on the result.
+  await page.evaluate(() => { window.__landnav.settings.lostHelp = true; window.__landnav.settings.lostHelpSec = 15; });
+  await page.keyboard.press('Enter'); await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(() => window.__landnav.run.result.reveals), 1);
+  await page.keyboard.press('KeyM');
+  // Face grid north again: entering VR keeps the desktop heading.
+  await page.evaluate(() => { window.__landnav.input.yaw = 0; });
+});
+
 await check('Enter VR button is offered', async () => {
   await page.waitForFunction(() => !document.getElementById('vr').disabled, null, { timeout: 10000 });
   assert.equal(await page.textContent('#vr'), 'Enter VR');
@@ -519,6 +554,19 @@ await check('M3 VR: course on the wrist; X card, A beads (hold resets), trigger 
   assert.equal(r.correct, 1);
   assert.ok(r.endedAtStart);
   assert.ok(await page.evaluate(() => window.__xr.pulses.some((p) => p.hand === 'right' && p.ms === 80)), 'punch haptic');
+});
+
+await check('Lost lifeline (VR): hold the left stick press', async () => {
+  await page.evaluate(() => window.__t.course({ seed: 5 }));
+  await frames(2);
+  await page.evaluate(() => { window.__xr.buttons.left[3] = true; });
+  await page.waitForFunction(() => window.__landnav.run.reveals === 1, null, { timeout: 30000, polling: 50 });
+  await page.evaluate(() => { window.__xr.buttons.left[3] = false; }); await frames(2);
+  const r = await page.evaluate(() => ({ v: window.__landnav.tools.map.here.visible, n: window.__landnav.run.reveals }));
+  assert.ok(r.v);
+  assert.equal(r.n, 1, 'one hold, one reveal');
+  assert.ok(await page.evaluate(() => window.__xr.pulses.some((p) => p.hand === 'left' && p.ms === 60)));
+  await page.evaluate(() => window.__landnav.tools.map.hidePosition());
 });
 
 await check('M3 VR: ruler along a drawn line (right stick press)', async () => {

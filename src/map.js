@@ -173,6 +173,19 @@ export class MapBoard {
     this.cursor.visible = false;
     group.add(this.cursor);
 
+    // "You are here": only when the user asks for it (the lost lifeline), briefly.
+    const here = new THREE.Group();
+    const red = new THREE.MeshBasicMaterial({ color: 0xe0161b, depthWrite: false, transparent: true });
+    const arrow = new THREE.Shape();
+    arrow.moveTo(0, 0.011); arrow.lineTo(0.0055, -0.005); arrow.lineTo(0, -0.002); arrow.lineTo(-0.0055, -0.005); arrow.closePath();
+    here.add(new THREE.Mesh(new THREE.ShapeGeometry(arrow), red));
+    here.add(new THREE.Mesh(new THREE.RingGeometry(0.013, 0.0155, 32), red));
+    here.position.z = 0.0015;
+    here.visible = false;
+    here.name = 'you-are-here';
+    this.here = here;
+    group.add(here);
+
     this.redraw();
   }
 
@@ -251,6 +264,19 @@ export class MapBoard {
     this.placeRuler();
     this.redraw();
     return true;
+  }
+
+  // Show the true position and facing (grid azimuth, degrees) on the map.
+  showPosition(x, z, gridAzDeg) {
+    const b = sceneToBoard(this.site, x, z);
+    this.here.position.set(b.bx, b.by, this.here.position.z);
+    // Board +y is grid north; turn the arrow clockwise by the azimuth.
+    this.here.rotation.set(0, 0, -THREE.MathUtils.degToRad(gridAzDeg));
+    this.here.visible = true;
+  }
+
+  hidePosition() {
+    this.here.visible = false;
   }
 
   // Lay the strip along the last line drawn, or take it away.

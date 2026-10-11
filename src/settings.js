@@ -28,6 +28,7 @@ export const DEFAULTS = Object.freeze({
   woodsVisibility: 150,       // m
   boundaryWarn: 50,           // m from the edge
   stakeVisibility: 40,        // m
+  vegetation: 'medium',       // 'off' | 'low' | 'medium' | 'high': how far trees are drawn
 
   // Tools
   units: 'deg',               // 'deg' | 'mils'

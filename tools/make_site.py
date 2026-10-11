@@ -336,13 +336,21 @@ def render_map(path, heights_abs, site, layout, contour_interval, index_interval
         dax.plot([0, ex], [0, ey], color=ink, linewidth=3 * s, linestyle=style)
         dax.text(ex, ey + 10 * s, label, ha="center", va="bottom", fontsize=22 * s, color=ink, fontweight="bold")
 
-    # Exaggerate small angles so the labels don't collide, but keep each line on the right side.
+    # Exaggerate small angles so the labels don't collide, but keep each line on its
+    # true side of grid north, and keep MN and TN in their true order when they share
+    # a side.
     def shown(v):
         return 0.0 if v == 0 else math.copysign(min(max(abs(v), 14), 30), v)
 
+    a_mn, a_tn = shown(gm), shown(-conv)
+    if a_mn * a_tn > 0 and abs(a_mn - a_tn) < 12:
+        far, near = (a_mn, a_tn) if abs(gm) >= abs(conv) else (a_tn, a_mn)
+        sign = math.copysign(1, far)
+        near, far = sign * 14, sign * 28
+        a_mn, a_tn = (far, near) if abs(gm) >= abs(conv) else (near, far)
     ray(0, "GN", "-")
-    ray(shown(gm), "MN", "-")
-    ray(shown(-conv), "TN", ":")
+    ray(a_mn, "MN", "-")
+    ray(a_tn, "TN", ":")
 
     tx = dcx + 200 * s
     side = "east" if gm >= 0 else "west"
@@ -384,6 +392,9 @@ def main(argv=None):
     p.add_argument("--index-interval", type=float, default=50)
     p.add_argument("--map-px", type=int, default=4096)
     p.add_argument("--relief", action="store_true", help="Add light shaded relief to the map (makes association easier)")
+    p.add_argument("--start-lat", type=float, help="Default course start (WGS84), e.g. a trailhead")
+    p.add_argument("--start-lon", type=float)
+    p.add_argument("--start-name", default="Start", help="Name of the default start")
     p.add_argument("--synthetic", action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--out", default=str(Path(__file__).resolve().parent.parent / "sites"))
     a = p.parse_args(argv)
@@ -474,6 +485,13 @@ def main(argv=None):
     }
     if a.synthetic:
         site["synthetic"] = True
+    if a.start_lat is not None and a.start_lon is not None:
+        se, sn = to_utm.transform(a.start_lon, a.start_lat)
+        sx, sz = se - e_west, n_north - sn
+        if not (0 <= sx <= a.size and 0 <= sz <= a.size):
+            raise SystemExit("--start-lat/--start-lon is outside the playable area")
+        # Centre of its 10 m grid square, like generated stakes.
+        site["default_start"] = {"name": a.start_name, "x": math.floor(sx / 10) * 10 + 5, "z": math.floor(sz / 10) * 10 + 5}
 
     print("Rendering map.png ...")
     render_map(out / "map.png", play, site, layout, a.contour_interval, a.index_interval, a.relief)

@@ -65,7 +65,8 @@ export function generateCourse(site, field, seed, opts = {}) {
 
   for (let attempt = 0; attempt < 200; attempt++) {
     const placed = [];
-    let start = null;
+    // A fixed start (a trailhead, say) is used as given; it needn't meet the stake rules.
+    let start = o.start ? { x: o.start.x, z: o.start.z } : null;
     for (let i = 0; i < 500 && !start; i++) {
       const p = { x: snap(m + rng() * (size - 2 * m)), z: snap(m + rng() * (size - 2 * m)) };
       if (ok(p, placed)) start = p;

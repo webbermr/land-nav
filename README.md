@@ -16,7 +16,12 @@ A pass needs at least the course's pass threshold of right codes, inside the tim
 
 The AAR comes in M4.
 
-The bundled site, `demo-synthetic`, is procedural terrain placed at a real UTM location for testing. It is not a real place, and its map says so. Swap in a real site once one is picked (spec section 1).
+Two sites ship with the app. Pick between them in the Course panel.
+
+- **`shenandoah-matthews-arm`** (the default) is real terrain: a 2 km square centred on Matthews Arm Campground in Shenandoah National Park, built from USGS 3DEP 1 m lidar. It uses the 2020 Northern Shenandoah survey, with the 2014 Shenandoah survey filling a corner the 2020 one doesn't cover. Elevation runs from 527 to 1,052 m. Declination is 10.0° W for 2026-10-11 (World Magnetic Model 2025); with 1.7° of grid convergence, the G-M angle is 11.7° W. Courses start at the campground.
+- **`demo-synthetic`** is procedural terrain for testing. It is not a real place, and its map says so.
+
+Shenandoah is a national park: follow park rules if you walk a course for real, and remember the app shows no trails, roads or water.
 
 ## Run it
 
@@ -72,7 +77,7 @@ python3 tools/make_site.py \
     --declination -10.6 --declination-date 2026-10-01
 ```
 
-Pass several `--dem` files if the area spans tiles. The script refuses a playable area that crosses a UTM zone or MGRS 100 km square, or that has holes in the elevation data. It prints the G-M angle and which way to convert. **Read that line.** A declination with the wrong sign silently ruins every azimuth.
+Pass several `--dem` files if the area spans tiles or one survey has gaps; earlier files win where they overlap. `--start-lat/--start-lon/--start-name` set a default course start such as a trailhead. List the site in `sites/index.json` to offer it in the app. The script refuses a playable area that crosses a UTM zone or MGRS 100 km square, or that has holes in the elevation data. It prints the G-M angle and which way to convert. **Read that line.** A declination with the wrong sign silently ruins every azimuth.
 
 `--relief` adds light hillshade to the map. It's off by default because it makes terrain association too easy.
 
@@ -91,7 +96,7 @@ node tools/make_course.mjs --site demo-synthetic --seed 1001 --id day-1 --name "
 # options: --points N --decoys N --time MIN --pass N --preset woods|open
 ```
 
-The generator follows spec 8.3. Legs are 200 to 600 m. Points sit at least 100 m from the boundary, on slopes under 30%. Every stake, the start included, is at least 150 m from every other. Stakes go at the centre of their 10 m grid square, so the 8-digit grid on the card is within about 7 m of the stake. The demo site has `day-1` (woods) and `day-2` (open, 90 minutes). "New random course" in the Course panel generates one in the browser from a seed.
+The generator follows spec 8.3. Legs are 200 to 600 m. Points sit at least 100 m from the boundary, on slopes under 30%. Every stake, the start included, is at least 150 m from every other. Stakes go at the centre of their 10 m grid square, so the 8-digit grid on the card is within about 7 m of the stake. Shenandoah has `matthews-arm-1` (woods) and `matthews-arm-2` (open); the demo site has `day-1` (woods) and `day-2` (open, 90 minutes). On a site with a default start, generated courses start there. "New random course" in the Course panel generates one in the browser from a seed.
 
 ## Tests
 
@@ -128,6 +133,9 @@ src/runlog.js         run log for the AAR (pure, tested)
 src/wrist.js          bead cord and score card
 tools/make_course.mjs generate a course file from a seed
 src/ui.js             Enter VR button, settings panel
+src/vegetation-logic.js tree cover and placement (pure, tested)
+src/vegetation.js     instanced trees, cut-outs, shrubs, logs, rocks
+src/sky.js            gradient sky dome
 src/settings.js       every tunable number, persisted when storage allows
 src/main.js           renderer, player rig, desktop and VR loops
 sites/<id>/           site.json, height.bin, skirt.bin, map.png, courses/
@@ -145,7 +153,7 @@ vendor/three/         three.js r186, unmodified
 - **Paper strip:** distance is measured with a ruler at map scale (0 to 1000 m, 10 m ticks), laid along the last line you drew with its zero on the line's first dot. That's the scale edge of a GTA protractor, rather than a blank strip you tick and carry to the scale bar. It gives the same information in one step fewer.
 - **Course end:** the spec says a course ends "when the user returns to start and ends it". Here you can end anywhere, but the run only passes if you ended within 10 m of the start, inside the time limit, with enough right codes.
 - **Score card rows:** a punch fills the highlighted row, then the highlight moves on to the next blank. Pick a different row first (Up/Down, or Y in VR) if you navigate the points out of order.
-- **Woods preset:** for now it's fog only (150 m). Trees are planned under realism in M5.
+- **Trees and ground (pulled forward from M5):** instanced trees around you: tall hardwoods with a touch of early-autumn colour, hemlock-like conifers in patches, and saplings, at about 200 per hectare. The cover is mostly forest with clearings, and thinner on very steep ground. Full 3D trees are drawn near you and flat cut-outs farther out. Shrubs, fallen logs and rocks (on steep ground) cover the ground near you. Placement is seeded per site, so the forest is the same every visit, and trees are kept off stakes and the start. The ground is leaf litter under trees and grass in clearings, blending to canopy green in the distance. **Woods** is full forest with 150 m visibility; **open** is open woodland with light haze. Settings → Trees (high, medium, low, off) trades distance for frame rate; medium is the default, sized for the Quest 3, but not yet measured on one. Trunks don't block you yet (collision is in M5).
 - **Lost lifeline (a deliberate exception to "never show position"):** press **K** on desktop, or hold the **left stick press** for a second in VR. A red arrow shows your true position and facing on the map for 15 seconds, then goes away. The desktop map opens on its own; in VR, hold the left grip to see it. Each use during a course is counted, logged with your position for the AAR, and shown on the score card and the result. It doesn't fail the run. Turn it off in Settings ("Allow 'show my position'") to practise without it.
 - **The compass rides the right controller's pointing ray,** not its grip, so the sighting axis is wherever you point. Where the compass and map sit in your hands (`compassOffset*`, `mapOffset*`, `mapTiltDeg` in `settings.js`) is a first guess that needs tuning on the headset.
 - **Map line weights** were thickened (minor contours 2.4 px, index 5 px at 4096) so they survive minification in the headset. Regenerate other sites to pick this up.

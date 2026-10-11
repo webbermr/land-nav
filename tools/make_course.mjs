@@ -31,6 +31,7 @@ if (args.decoys) opts.decoys = Number(args.decoys);
 if (args.time) opts.timeLimitMin = Number(args.time);
 if (args.pass) opts.passThreshold = Number(args.pass);
 if (args.preset) opts.preset = args.preset;
+if (site.default_start) opts.start = { x: site.default_start.x, z: site.default_start.z };
 
 const course = generateCourse(site, field, Number(args.seed), opts);
 if (args.id) course.id = args.id;

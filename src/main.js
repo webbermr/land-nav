@@ -18,9 +18,13 @@ import { loadMapTexture } from './map.js';
 import { CourseRun, loadCourse, loadCourseIndex, formatClock } from './course.js';
 import { generateCourse, validateCourse } from './course-logic.js';
 import { createBeadsModel, createScoreCard } from './wrist.js';
+import { Vegetation, VEGETATION_QUALITY } from './vegetation.js';
+import { forestCover, hashString } from './vegetation-logic.js';
+import { createSky, SKY } from './sky.js';
 
 const params = new URLSearchParams(location.search);
-const siteId = params.get('site') || 'demo-synthetic';
+// The site comes from ?site=, else the first entry in sites/index.json (see start()).
+let siteId = params.get('site');
 const debug = params.has('debug');
 
 const settings = loadSettings();
@@ -48,8 +52,9 @@ renderer.xr.setFoveation(1); // fixed foveated rendering (spec section 11)
 document.getElementById('app').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const SKY = new THREE.Color(0xaec6dc);
-scene.background = SKY;
+scene.background = SKY.horizon;
+const sky = createSky();
+scene.add(sky);
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 9000);
 camera.rotation.order = 'YXZ';
@@ -58,16 +63,31 @@ player.name = 'player';
 player.add(camera);
 scene.add(player);
 
-scene.add(new THREE.HemisphereLight(0xdfe9f3, 0x3a3626, 0.55));
+// Sky light plus warm bounce from the ground, so tree undersides and trunks aren't black.
+scene.add(new THREE.HemisphereLight(0xdfe9f3, 0x6b6250, 0.95));
 // Low-ish sun from the south-west so slopes read clearly. No shadows in v1.
-const sun = new THREE.DirectionalLight(0xfff1dc, 2.6);
+const sun = new THREE.DirectionalLight(0xfff1dc, 2.2);
 sun.position.set(-0.55, 0.55, 0.62).multiplyScalar(1000);
 scene.add(sun);
 
+let vegetation = null;
+
+// Woods: you see about 150 m. Open: light haze, so distant ridges fade like real air.
 function applyPreset() {
   scene.fog = settings.preset === 'woods'
-    ? new THREE.Fog(SKY, settings.woodsVisibility * 0.15, settings.woodsVisibility)
-    : null;
+    ? new THREE.Fog(SKY.horizon, settings.woodsVisibility * 0.15, settings.woodsVisibility)
+    : new THREE.Fog(SKY.horizon, 1500, 7000);
+  if (vegetation) {
+    vegetation.setPreset(settings.preset);
+    applyCanopyRange();
+  }
+}
+
+// The ground reads as canopy where drawn trees stop.
+function applyCanopyRange() {
+  if (!terrain) return;
+  const q = VEGETATION_QUALITY[settings.vegetation] ?? VEGETATION_QUALITY.medium;
+  terrain.setCanopyRange(q.far * 0.6, q.far * 1.05);
 }
 applyPreset();
 
@@ -230,6 +250,7 @@ function togglePanel() {
 }
 buildSettingsPanel(panel, settings, (key) => {
   if (key === 'paceCountPer100m') loco.pace.reset();
+  if (key === 'vegetation') applyCanopyRange();
 });
 
 function placeDesktopCamera() {
@@ -401,6 +422,7 @@ function mountWrist() {
 
 async function startCourse(course) {
   run?.dispose();
+  vegetation?.setExclusions([course.start, ...course.points, ...course.decoys]);
   run = new CourseRun({ scene, terrain, site: siteData.site, course, settings });
   const problems = validateCourse(course, siteData.site, siteData.field);
   if (problems.length) console.warn(`Course ${course.id} breaks the generator's rules:\n  ${problems.join('\n  ')}`);
@@ -540,10 +562,36 @@ function updateXRCourseControls() {
   }
 }
 
+// Generated courses start at the site's default start (a trailhead) when it has one.
+function genOptions() {
+  const s = siteData?.site.default_start;
+  return s ? { start: { x: s.x, z: s.z } } : {};
+}
+
 // ---- Course panel (page UI) ----
 
-function buildCoursePanel(index) {
+function buildCoursePanel(index, sites = []) {
   coursePanel.replaceChildren();
+  if (sites.length > 1) {
+    const sh = document.createElement('h2');
+    sh.textContent = 'Site';
+    const sitePick = document.createElement('select');
+    for (const s of sites) {
+      const o = document.createElement('option');
+      o.value = s.id;
+      o.textContent = s.name;
+      sitePick.append(o);
+    }
+    sitePick.value = siteId;
+    // A site is a whole new world: reload with it.
+    sitePick.addEventListener('change', () => {
+      const q = new URLSearchParams(location.search);
+      q.set('site', sitePick.value);
+      q.delete('course');
+      location.search = q.toString();
+    });
+    coursePanel.append(sh, sitePick);
+  }
   const h = document.createElement('h2');
   h.textContent = 'Course';
   const select = document.createElement('select');
@@ -575,7 +623,7 @@ function buildCoursePanel(index) {
     try {
       const v = select.value;
       const course = v === 'gen'
-        ? generateCourse(siteData.site, siteData.field, Number(seed.value) || 1)
+        ? generateCourse(siteData.site, siteData.field, Number(seed.value) || 1, genOptions())
         : await loadCourse(`sites/${encodeURIComponent(siteId)}`, v.slice(5));
       await startCourse(course);
     } catch (err) {
@@ -589,7 +637,7 @@ function buildCoursePanel(index) {
   endBtn.addEventListener('click', () => finishCourse('ended'));
   const note = document.createElement('p');
   note.className = 'note';
-  note.textContent = 'You start at the START flag. Plot the points from the score card, navigate to each, punch its stake, then come back to the start and end the course.';
+  note.textContent = (siteData.site.default_start ? `The START flag is at ${siteData.site.default_start.name}. ` : '') + 'You start at the START flag. Plot the points from the score card, navigate to each, punch its stake, then come back to the start and end the course.';
   coursePanel.append(h, select, seedRow, startBtn, endBtn, note);
 }
 
@@ -679,6 +727,10 @@ function updateHud(dt) {
     const heading = gridAzimuth(-Math.sin(input.yaw), -Math.cos(input.yaw));
     lines.push(`x ${p.x.toFixed(1)}  z ${p.z.toFixed(1)}  ground ${p.y.toFixed(1)}  grid az ${heading.toFixed(1)}`);
     lines.push(`walked ${loco.pace.distance.toFixed(1)} m  paces ${loco.pace.leftCount}  grade ${(loco.lastGrade * 100).toFixed(0)}%`);
+    if (vegetation) {
+      const v = vegetation.stats;
+      lines.push(`trees ${v.near} near, ${v.cut} far, ${v.clutter} ground  cover ${vegetation.coverAt(player.position.x, player.position.z).toFixed(2)}`);
+    }
     const c = compassDebug();
     if (c) lines.push(c);
     if (run) lines.push(`course ${run.course.id} ${run.state} ${formatClock(run.elapsed)} row ${run.row + 1} beads ${run.beads.metres} m`);
@@ -767,16 +819,30 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
+async function loadSiteIndex() {
+  try {
+    const res = await fetch('sites/index.json');
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
+  }
+}
+
 async function start() {
+  const sites = await loadSiteIndex();
+  siteId ||= sites[0]?.id || 'demo-synthetic';
   setStatus(`Loading site "${siteId}" ...`);
   const base = `sites/${encodeURIComponent(siteId)}`;
   const [data, mapTexture] = await Promise.all([loadSite(base), loadMapTexture(base)]);
-  terrain = buildTerrain(renderer, data);
+  const vegSeed = hashString(data.site.id);
+  terrain = buildTerrain(renderer, data, { coverAt: (x, z, slope) => forestCover(vegSeed, x, z, slope) });
+  vegetation = new Vegetation(scene, terrain, data.site, settings);
+  applyCanopyRange();
   scene.add(terrain.group);
   tools = new Tools({ renderer, camera, site: data.site, mapTexture, settings });
   for (const hand of ['left', 'right']) if (hands[hand].grip) tools.attach(hand, hands[hand]);
   siteData = data;
-  buildCoursePanel(await loadCourseIndex(base));
+  buildCoursePanel(await loadCourseIndex(base), sites);
   mountWrist();
   if (debug && params.get('beacon')) {
     const [bx, bz] = params.get('beacon').split(',').map(Number);
@@ -806,13 +872,17 @@ async function start() {
     const dt = Math.min(timer.getDelta(), 0.1);
     if (renderer.xr.isPresenting) updateXR(dt);
     else updateDesktop(dt);
+    // Trees and sky follow the viewer.
+    camera.getWorldPosition(head);
+    sky.position.copy(head);
+    vegetation.update(head.x, head.z);
     renderer.render(scene, camera);
     updateHud(dt);
   });
 
   // Exposed for automated checks and console poking. Not a gameplay API.
   window.__landnav = {
-    camera, player, terrain, site: data.site, field: data.field, renderer, scene, settings, loco, input, tools, beacon, wrist, startCourse,
+    camera, player, terrain, site: data.site, field: data.field, renderer, scene, settings, loco, input, tools, beacon, wrist, startCourse, vegetation,
     get run() { return run; },
   };
 
@@ -822,7 +892,7 @@ async function start() {
     const index = await loadCourseIndex(base);
     const listed = index.find((c) => c.id === want);
     if (listed) await startCourse(await loadCourse(base, listed.file));
-    else if (want.startsWith('gen:')) await startCourse(generateCourse(data.site, data.field, Number(want.slice(4)) || 1));
+    else if (want.startsWith('gen:')) await startCourse(generateCourse(data.site, data.field, Number(want.slice(4)) || 1, genOptions()));
     else showToast(`No course "${want}" for this site.`);
   }
 }

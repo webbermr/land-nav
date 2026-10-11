@@ -6,7 +6,7 @@
 // height does the rest.
 import * as THREE from 'three';
 import { loadSite, buildTerrain } from './terrain.js';
-import { loadSettings, saveSettings } from './settings.js';
+import { loadSettings, saveSettings, storage } from './settings.js';
 import { DesktopInput, XRInput } from './input.js';
 import { Locomotion } from './locomotion.js';
 import { Footfalls } from './footfalls.js';
@@ -24,6 +24,8 @@ import { createSky, SKY } from './sky.js';
 import { loadFeatures, buildFeatures } from './features.js';
 import { FeatureIndex, stakeAvoider } from './features-logic.js';
 import { resolveCollisions } from './collision.js';
+import { analyzeRun, buildRunExport } from './aar-logic.js';
+import { drawReview, createReviewBoard, downloadRun } from './aar.js';
 import { dataUrl } from './data-url.js';
 
 const params = new URLSearchParams(location.search);
@@ -108,6 +110,10 @@ let tools = null;
 let beacon = null;
 let siteData = null;   // { site, field, ... } from loadSite
 let featureIndex = null; // roads, buildings etc. from features.json, if the site has one
+let mapImage = null;     // map.png, for the review board
+let lastRun = null;      // the last finished run (buildRunExport), for the review
+const reviewBoard = createReviewBoard();
+scene.add(reviewBoard.mesh);
 let run = null;        // the current CourseRun, if a course is loaded
 const wrist = { beads: createBeadsModel(), card: createScoreCard(), cardShown: false };
 const coursePanel = document.getElementById('course');
@@ -231,6 +237,7 @@ addEventListener('keydown', (e) => {
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (e.code === 'KeyP') togglePanel();
   if (renderer.xr.isPresenting) return;
+  if (e.code === 'Escape' && !reviewEl.hidden) hideReview();
   if (run && wrist.cardShown && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) {
     e.preventDefault();
     run.selectRow(e.code === 'ArrowUp' ? -1 : 1);
@@ -447,6 +454,7 @@ function mountWrist() {
 
 async function startCourse(course) {
   run?.dispose();
+  hideReview();
   vegetation?.setExclusions([course.start, ...course.points, ...course.decoys]);
   run = new CourseRun({ scene, terrain, site: siteData.site, course, settings });
   const problems = validateCourse(course, siteData.site, siteData.field);
@@ -532,7 +540,65 @@ function finishCourse(reason) {
   const r = run.end(currentPos(), reason);
   setCardShown(true);
   showToast(`Course over: ${r.correct}/${r.total} correct, ${r.pass ? 'PASS' : 'FAIL'}.${reason === 'time' ? ' Out of time.' : ''}`);
+  courseEnded();
 }
+
+// ---- After-action review ----
+
+const LAST_RUN_KEY = 'landnav.lastrun.v1';
+const reviewEl = document.getElementById('review');
+const reviewCanvas = reviewEl.querySelector('canvas');
+
+function courseEnded() {
+  lastRun = buildRunExport({
+    course: run.course, site: siteData.site, log: run.log, beads: run.beads.log, result: run.result, settings,
+  });
+  const s = storage();
+  try { s?.setItem(LAST_RUN_KEY, JSON.stringify(lastRun)); } catch { /* too big or blocked: keep it in memory */ }
+  showReview();
+}
+
+function loadLastRun(siteIdNow) {
+  try {
+    const r = JSON.parse(storage()?.getItem(LAST_RUN_KEY) || 'null');
+    return r && r.format === 'land-nav-run' && r.site?.id === siteIdNow ? r : null;
+  } catch {
+    return null;
+  }
+}
+
+function reviewArgs(hint) {
+  return { site: siteData.site, mapImage, run: lastRun, analysis: analyzeRun(lastRun, siteData.site), hint };
+}
+
+// Desktop: a page overlay. VR: a table in front of you.
+function showReview() {
+  if (!lastRun) {
+    showToast('No finished run to review yet.');
+    return;
+  }
+  if (renderer.xr.isPresenting) {
+    reviewBoard.draw(reviewArgs('B (map put away) hides or shows this table. Download the run from the Course panel after VR.'));
+    camera.getWorldPosition(head);
+    camera.getWorldDirection(fwd);
+    fwd.y = 0;
+    if (fwd.lengthSq() < 1e-4) fwd.copy(lastHeading);
+    reviewBoard.placeBefore(head, fwd.normalize());
+    return;
+  }
+  drawReview(reviewCanvas, reviewArgs('Esc or Close to return. Download saves the run as JSON.'));
+  reviewEl.hidden = false;
+  coursePanel.hidden = true;
+  if (document.pointerLockElement) document.exitPointerLock();
+}
+
+function hideReview() {
+  reviewEl.hidden = true;
+  reviewBoard.mesh.visible = false;
+}
+
+document.getElementById('review-close').addEventListener('click', hideReview);
+document.getElementById('review-download').addEventListener('click', () => lastRun && downloadRun(lastRun));
 
 function courseTick(dt, x, z, moving) {
   if (revealUntil && performance.now() > revealUntil) {
@@ -545,6 +611,7 @@ function courseTick(dt, x, z, moving) {
   if (wasRunning && run.state === 'ended') {
     setCardShown(true);
     showToast(`Time is up: ${run.result.correct}/${run.result.total} correct, ${run.result.pass ? 'PASS' : 'FAIL'}.`);
+    courseEnded();
   }
   wrist.beads.update(run.beads);
   if (wrist.cardShown) wrist.card.draw(run, renderer.xr.isPresenting ? HINTS.vr : HINTS.desktop);
@@ -569,6 +636,11 @@ function holdButton(hand, button, holdSec, { onTap, onHold }) {
 function updateXRCourseControls() {
   if (xrInput.justPressed('left', 'primary')) setCardShown(!wrist.cardShown);
   holdButton('left', 'stick', 1, { onHold: () => { showMyPosition(); xrInput.pulse('left', 0.6, 60); } });
+  // B shows or hides the review table (with the map up, B is the protractor).
+  if (xrInput.justPressed('right', 'secondary') && !tools?.map.group.visible && lastRun) {
+    if (reviewBoard.mesh.visible) reviewBoard.mesh.visible = false;
+    else showReview();
+  }
   if (!run) return;
   const pos = { x: head.x, z: head.z };
   holdButton('right', 'primary', 1, {
@@ -662,10 +734,14 @@ function buildCoursePanel(index, sites = []) {
   endBtn.type = 'button';
   endBtn.textContent = 'End course';
   endBtn.addEventListener('click', () => finishCourse('ended'));
+  const reviewBtn = document.createElement('button');
+  reviewBtn.type = 'button';
+  reviewBtn.textContent = 'Review last run';
+  reviewBtn.addEventListener('click', showReview);
   const note = document.createElement('p');
   note.className = 'note';
   note.textContent = (siteData.site.default_start ? `The START flag is at ${siteData.site.default_start.name}. ` : '') + 'You start at the START flag. Plot the points from the score card, navigate to each, punch its stake, then come back to the start and end the course.';
-  coursePanel.append(h, select, seedRow, startBtn, endBtn, note);
+  coursePanel.append(h, select, seedRow, startBtn, endBtn, reviewBtn, note);
 }
 
 document.getElementById('course-button').addEventListener('click', () => {
@@ -722,6 +798,7 @@ function exitVR() {
   tools?.mountDesktop();
   mountWrist();
   vrButton.textContent = 'Enter VR';
+  reviewBoard.mesh.visible = false;
 }
 
 vrButton.addEventListener('click', () => {
@@ -862,6 +939,8 @@ async function start() {
   setStatus(`Loading site "${siteId}" ...`);
   const base = `sites/${encodeURIComponent(siteId)}`;
   const [data, mapTexture] = await Promise.all([loadSite(base), loadMapTexture(base)]);
+  mapImage = mapTexture.image;
+  lastRun = loadLastRun(data.site.id);
   const features = await loadFeatures(base, data.site);
   const vegSeed = hashString(data.site.id);
   featureIndex = features ? new FeatureIndex(features) : null;
@@ -919,6 +998,8 @@ async function start() {
   window.__landnav = {
     camera, player, terrain, site: data.site, field: data.field, renderer, scene, settings, loco, input, tools, beacon, wrist, startCourse, vegetation, featureIndex, collide,
     get run() { return run; },
+    get lastRun() { return lastRun; },
+    showReview, hideReview, reviewBoard,
   };
 
   // ?course=<id> loads a listed course; ?course=gen:<seed> generates one.

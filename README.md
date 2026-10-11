@@ -14,7 +14,17 @@ A WebXR land navigation trainer for the Meta Quest 3 browser. You stand on real 
 
 A pass needs at least the course's pass threshold of right codes, inside the time limit, ending within 10 m of the start. Every run is logged (a 1 s track, map and compass time, bead presses, punches) for the after-action review in M4. Run summaries are kept in browser storage.
 
-The AAR comes in M4.
+**M4 (after-action review): built, awaiting a headset check.** When a course ends, the review opens: on desktop as a page over the view, in VR as a table in front of you (B, with the map put away, hides and shows it). The map side shows your track, coloured by leg, over the ideal straight legs. It also marks your punches, every "show my position", and where you were once you'd walked each leg's distance, tied back to the ideal line. The panel side gives, per leg:
+
+- the grid and magnetic azimuth and distance you should have plotted
+- the time it took and the distance you walked
+- whether you reached the point, or how close you came
+- your drift left or right at the leg distance, and how far you still were from the point
+- your bead count against the distance you actually walked, as a percent error
+
+Below that come the result, total time, distance against ideal, how long the map and compass were out, and your pace count as it worked out on this terrain. **Download run (JSON)** saves everything: the course, the 1 s track, events, tool times, bead presses, result and settings. The last run is kept in browser storage, so **Course → Review last run** brings it back after a reload.
+
+Legs are split by the stakes you actually reached, not by which score-card row you wrote in. A leg ends when you punch its point's stake. If you never did, it ends at your closest approach to that point before you punched a later one. A code in the wrong row still counts against you on the card, and the review says what you wrote.
 
 Two sites ship with the app. Pick between them in the Course panel.
 
@@ -149,6 +159,8 @@ src/course-logic.js   course generator, validator, scoring (pure, tested)
 src/course.js         stakes, punching, course clock, results, run history
 src/beads.js          pace bead counter (pure, tested)
 src/runlog.js         run log for the AAR (pure, tested)
+src/aar-logic.js      AAR: legs, drift, closest approach, pace error, run export (pure, tested)
+src/aar.js            AAR board: map, track and stats on a canvas; VR table; JSON download
 src/wrist.js          bead cord and score card
 tools/make_course.mjs generate a course file from a seed
 src/ui.js             Enter VR button, settings panel

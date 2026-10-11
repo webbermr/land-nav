@@ -39,8 +39,12 @@ const ROCK = new THREE.Color(0x77706a);
 const tmp = new THREE.Color();
 
 // Ground colour from slope (0 flat .. 1 vertical normal.y inverse) and relative elevation.
-function groundColor(out, normalY, elevT, jitter) {
+const LITTER = new THREE.Color(0x5e4e36);
+
+// cover: tree cover 0..1. Under trees the floor is leaf litter, in clearings grass.
+function groundColor(out, normalY, elevT, jitter, cover = 0) {
   out.copy(GRASS_LOW).lerp(GRASS_HIGH, elevT);
+  out.lerp(LITTER, cover * 0.85);
   const steep = THREE.MathUtils.smoothstep(1 - normalY, 0.06, 0.25);
   tmp.copy(DIRT).lerp(ROCK, THREE.MathUtils.smoothstep(1 - normalY, 0.2, 0.45));
   out.lerp(tmp, steep);
@@ -87,7 +91,9 @@ function makeDetailTexture(renderer) {
   return tex;
 }
 
-function buildChunk(field, r0, r1, c0, c1, elevSpan) {
+const slopeOf = (ny) => Math.sqrt(Math.max(0, 1 - ny * ny)) / ny;
+
+function buildChunk(field, r0, r1, c0, c1, elevSpan, coverAt) {
   const g = field.grid;
   const sp = field.spacing;
   const h = field.heights;
@@ -98,6 +104,7 @@ function buildChunk(field, r0, r1, c0, c1, elevSpan) {
   const nor = new Float32Array(count * 3);
   const col = new Float32Array(count * 3);
   const uv = new Float32Array(count * 2);
+  const cov = new Float32Array(count);
   const c = new THREE.Color();
   let v = 0;
   for (let r = r0; r <= r1; r++) {
@@ -115,7 +122,8 @@ function buildChunk(field, r0, r1, c0, c1, elevSpan) {
       const len = Math.hypot(nx, ny, nz);
       nx /= len; ny /= len; nz /= len;
       nor[v * 3] = nx; nor[v * 3 + 1] = ny; nor[v * 3 + 2] = nz;
-      groundColor(c, ny, elevSpan > 0 ? y / elevSpan : 0, hash2(cc, r));
+      cov[v] = coverAt ? coverAt(x, z, slopeOf(ny)) : 0;
+      groundColor(c, ny, elevSpan > 0 ? y / elevSpan : 0, hash2(cc, r), cov[v]);
       col[v * 3] = c.r; col[v * 3 + 1] = c.g; col[v * 3 + 2] = c.b;
       uv[v * 2] = x / DETAIL_TILE_M; uv[v * 2 + 1] = z / DETAIL_TILE_M;
       v++;
@@ -133,13 +141,14 @@ function buildChunk(field, r0, r1, c0, c1, elevSpan) {
   geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setAttribute('cover', new THREE.BufferAttribute(cov, 1));
   geo.setIndex(idx);
   geo.computeBoundingBox();
   geo.computeBoundingSphere();
   return geo;
 }
 
-function buildSkirt(site, field, skirtField, material) {
+function buildSkirt(site, field, skirtField, material, coverAt) {
   const sk = site.skirt;
   const g = sk.grid;
   const sp = sk.spacing_m;
@@ -149,6 +158,7 @@ function buildSkirt(site, field, skirtField, material) {
   const pos = new Float32Array(g * g * 3);
   const col = new Float32Array(g * g * 3);
   const uv = new Float32Array(g * g * 2);
+  const cov = new Float32Array(g * g);
   const inside = (x, z) => x >= 0 && z >= 0 && x <= size && z <= size;
   const span = site.elev_max - site.elev_min;
   const c = new THREE.Color();
@@ -161,7 +171,8 @@ function buildSkirt(site, field, skirtField, material) {
       const y = inside(x, z) ? field.heightAt(x, z) - 0.6 : skirtField.heights[i];
       pos[i * 3] = x; pos[i * 3 + 1] = y; pos[i * 3 + 2] = z;
       const ny = 1 / Math.hypot(1, skirtField.slopeAt(x - ox, z - oz, 1, 0), skirtField.slopeAt(x - ox, z - oz, 0, 1));
-      groundColor(c, ny, span > 0 ? THREE.MathUtils.clamp(y / span, 0, 1) : 0, hash2(k + 7, r + 3));
+      cov[i] = coverAt ? coverAt(x, z, slopeOf(ny)) : 0;
+      groundColor(c, ny, span > 0 ? THREE.MathUtils.clamp(y / span, 0, 1) : 0, hash2(k + 7, r + 3), cov[i]);
       col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b;
       uv[i * 2] = x / DETAIL_TILE_M; uv[i * 2 + 1] = z / DETAIL_TILE_M;
     }
@@ -180,6 +191,7 @@ function buildSkirt(site, field, skirtField, material) {
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
   geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  geo.setAttribute('cover', new THREE.BufferAttribute(cov, 1));
   geo.setIndex(idx);
   geo.computeVertexNormals();
   geo.computeBoundingSphere();
@@ -188,12 +200,25 @@ function buildSkirt(site, field, skirtField, material) {
   return mesh;
 }
 
-export function buildTerrain(renderer, { site, field, skirtField }) {
+// coverAt(x, z, slope): tree cover 0..1, for colouring the ground. Close up, the
+// ground under trees is leaf litter; past the edge of the drawn trees it blends to
+// canopy green, which is what a forested hillside looks like from a distance.
+export function buildTerrain(renderer, { site, field, skirtField }, { coverAt } = {}) {
   const group = new THREE.Group();
   group.name = 'terrain';
 
   const detail = makeDetailTexture(renderer);
   const ground = new THREE.MeshLambertMaterial({ vertexColors: true, map: detail });
+  const canopyRange = { value: new THREE.Vector2(1e6, 2e6) };
+  ground.onBeforeCompile = (sh) => {
+    sh.uniforms.canopyColor = { value: new THREE.Color(0x3d5428) };
+    sh.uniforms.canopyRange = canopyRange;
+    sh.vertexShader = 'attribute float cover;\nvarying float vCover;\n'
+      + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vCover = cover;');
+    sh.fragmentShader = 'uniform vec3 canopyColor;\nuniform vec2 canopyRange;\nvarying float vCover;\n'
+      + sh.fragmentShader.replace('#include <color_fragment>',
+        '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, canopyColor, vCover * smoothstep(canopyRange.x, canopyRange.y, length(vViewPosition)));');
+  };
 
   const cells = field.grid - 1;
   const span = site.elev_max - site.elev_min;
@@ -204,7 +229,7 @@ export function buildTerrain(renderer, { site, field, skirtField }) {
     for (let j = 0; j < CHUNKS; j++) {
       const c0 = Math.round((j * cells) / CHUNKS);
       const c1 = Math.round(((j + 1) * cells) / CHUNKS);
-      const geo = buildChunk(field, r0, r1, c0, c1, span);
+      const geo = buildChunk(field, r0, r1, c0, c1, span, coverAt);
       triangles += geo.index.count / 3;
       const mesh = new THREE.Mesh(geo, ground);
       mesh.name = `chunk-${i}-${j}`;
@@ -212,7 +237,7 @@ export function buildTerrain(renderer, { site, field, skirtField }) {
       group.add(mesh);
     }
   }
-  const skirt = buildSkirt(site, field, skirtField, ground);
+  const skirt = buildSkirt(site, field, skirtField, ground, coverAt);
   skirt.matrixAutoUpdate = false;
   triangles += skirt.geometry.index.count / 3;
   group.add(skirt);
@@ -223,5 +248,9 @@ export function buildTerrain(renderer, { site, field, skirtField }) {
     heightAt: (x, z) => field.heightAt(x, z),
     slopeAt: (x, z, dx, dz) => field.slopeAt(x, z, dx, dz),
     size: field.size,
+    // Where the ground starts reading as canopy (metres from the eye). Off: pass 0, 0.
+    setCanopyRange(near, far) {
+      canopyRange.value.set(near > 0 ? near : 1e6, far > 0 ? far : 2e6);
+    },
   };
 }

@@ -314,6 +314,33 @@ await check('Lost lifeline (desktop): K shows a brief, counted "you are here"; c
   await page.evaluate(() => { window.__landnav.input.yaw = 0; });
 });
 
+await check('Trees: drawn around you, never on a stake, and the quality setting turns them off', async () => {
+  const c = await page.evaluate(() => window.__t.course('day-1'));
+  await page.evaluate(() => { window.__landnav.settings.preset = 'woods'; window.__landnav.vegetation.setPreset('woods'); });
+  await frames(3);
+  const r = await page.evaluate(([pts]) => {
+    const v = window.__landnav.vegetation;
+    v.update(pts[0].x + 0.01, pts[0].z); // force a refresh at the start
+    const near = [];
+    for (const t of v.treeCache.values()) for (const tree of t) for (const p of pts) {
+      if (Math.hypot(tree.x - p.x, tree.z - p.z) < 4) near.push([tree.x, tree.z]);
+    }
+    return { stats: v.stats, near };
+  }, [[c.start, ...c.points, ...c.decoys]]);
+  assert.ok(r.stats.near > 50 && r.stats.cut > 100, JSON.stringify(r.stats));
+  assert.deepEqual(r.near, [], 'no trees within 4 m of a stake');
+  const off = await page.evaluate(() => {
+    const l = window.__landnav;
+    l.settings.vegetation = 'off';
+    l.vegetation.update(l.player.position.x + 20, l.player.position.z);
+    const s = l.vegetation.stats;
+    l.settings.vegetation = 'medium';
+    return s;
+  });
+  assert.deepEqual(off, { near: 0, cut: 0, clutter: 0 });
+  await page.evaluate(() => { const l = window.__landnav; l.settings.preset = 'open'; l.vegetation.setPreset('open'); l.run.end(l.run.course.start); });
+});
+
 await check('Enter VR button is offered', async () => {
   await page.waitForFunction(() => !document.getElementById('vr').disabled, null, { timeout: 10000 });
   assert.equal(await page.textContent('#vr'), 'Enter VR');

@@ -1,12 +1,13 @@
 // Terrain loading and mesh building (spec section 5.4).
 import * as THREE from 'three';
 import { decodeHeights, Heightfield } from './heightfield.js';
+import { dataUrl } from './data-url.js';
 
 const CHUNKS = 8;
 const DETAIL_TILE_M = 6; // detail texture repeats every this many metres
 
 async function fetchOk(url, kind) {
-  const res = await fetch(url);
+  const res = await fetch(dataUrl(url));
   if (!res.ok) throw new Error(`Could not load ${url} (${res.status})`);
   return kind === 'json' ? res.json() : res.arrayBuffer();
 }

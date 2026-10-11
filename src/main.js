@@ -24,6 +24,7 @@ import { createSky, SKY } from './sky.js';
 import { loadFeatures, buildFeatures } from './features.js';
 import { FeatureIndex, stakeAvoider } from './features-logic.js';
 import { resolveCollisions } from './collision.js';
+import { dataUrl } from './data-url.js';
 
 const params = new URLSearchParams(location.search);
 // The site comes from ?site=, else the first entry in sites/index.json (see start()).
@@ -848,7 +849,7 @@ addEventListener('resize', () => {
 
 async function loadSiteIndex() {
   try {
-    const res = await fetch('sites/index.json');
+    const res = await fetch(dataUrl('sites/index.json'));
     return res.ok ? await res.json() : [];
   } catch {
     return [];

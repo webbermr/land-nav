@@ -133,7 +133,7 @@ export class CourseRun {
 
   // pos: true horizontal position. flags: { moving, mapOut, compassOut }.
   update(dt, pos, flags) {
-    const vis2 = this.settings.stakeVisibility ** 2;
+    const vis2 = (this.settings.night ? this.settings.nightStakeVisibility : this.settings.stakeVisibility) ** 2;
     for (const s of this.stakes) {
       s.mesh.visible = (s.x - pos.x) ** 2 + (s.z - pos.z) ** 2 <= vis2;
     }

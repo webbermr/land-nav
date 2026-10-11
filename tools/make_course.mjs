@@ -6,6 +6,7 @@
 //
 // Options: --points N --decoys N --time MIN --pass N --preset woods|open
 //          --start x,z (scene metres; default: the site's default_start)
+//          --night (a night course)  --leg-min M --leg-max M
 // If the site has features.json, stakes keep clear of roads, buildings, parking and
 // the campground (src/features-logic.js).
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
@@ -35,6 +36,8 @@ if (args.decoys) opts.decoys = Number(args.decoys);
 if (args.time) opts.timeLimitMin = Number(args.time);
 if (args.pass) opts.passThreshold = Number(args.pass);
 if (args.preset) opts.preset = args.preset;
+if (args['leg-min']) opts.legMin = Number(args['leg-min']);
+if (args['leg-max']) opts.legMax = Number(args['leg-max']);
 if (args.start) {
   const [x, z] = args.start.split(',').map(Number);
   opts.start = { x, z };
@@ -45,6 +48,7 @@ if (existsSync(featuresUrl)) opts.avoid = stakeAvoider(new FeatureIndex(JSON.par
 const course = generateCourse(site, field, Number(args.seed), opts);
 if (args.id) course.id = args.id;
 if (args.name) course.name = args.name;
+if ('night' in args) course.night = true;
 const problems = validateCourse(course, site, field, opts);
 if (problems.length) {
   console.error('Generated course failed validation:\n  ' + problems.join('\n  '));

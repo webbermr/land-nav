@@ -28,6 +28,9 @@ export const DEFAULTS = Object.freeze({
   woodsVisibility: 150,       // m
   boundaryWarn: 50,           // m from the edge
   stakeVisibility: 40,        // m
+  night: false,               // set per course or with N; not a saved preference
+  nightVisibility: 60,        // m: tree silhouettes against the sky, no more
+  nightStakeVisibility: 10,   // m
   vegetation: 'medium',       // 'off' | 'low' | 'medium' | 'high': how far trees are drawn
   collisions: true,           // trunks, logs, rocks and buildings block you (shrubs don't)
   collisionRadius: 0.25,      // m, the walker's body
@@ -78,7 +81,7 @@ export function loadSettings() {
   try {
     const saved = JSON.parse(s.getItem(STORAGE_KEY) || '{}');
     for (const k of Object.keys(DEFAULTS)) {
-      if (k in saved && typeof saved[k] === typeof DEFAULTS[k]) out[k] = saved[k];
+      if (!TRANSIENT.has(k) && k in saved && typeof saved[k] === typeof DEFAULTS[k]) out[k] = saved[k];
     }
   } catch {
     // Corrupt or unreadable settings: fall back to defaults.
@@ -86,13 +89,16 @@ export function loadSettings() {
   return out;
 }
 
+// Set per course or per session, never remembered.
+const TRANSIENT = new Set(['night']);
+
 export function saveSettings(settings) {
   const s = storage();
   if (!s) return false;
   try {
     const diff = {};
     for (const k of Object.keys(DEFAULTS)) {
-      if (settings[k] !== DEFAULTS[k]) diff[k] = settings[k];
+      if (!TRANSIENT.has(k) && settings[k] !== DEFAULTS[k]) diff[k] = settings[k];
     }
     s.setItem(STORAGE_KEY, JSON.stringify(diff));
     return true;

@@ -420,6 +420,54 @@ await check('Collision: a trunk stops you, only distance walked counts, and it c
   }
 });
 
+await check('M5 night: dark scene, red headlamp (T), stakes only within 10 m, luminous compass', async () => {
+  const c = await page.evaluate(async () => {
+    const c = await (await fetch('sites/demo-synthetic/courses/day-1.json')).json();
+    await window.__landnav.startCourse(c, { night: true });
+    return c;
+  });
+  try {
+    const state = () => page.evaluate(() => {
+      const l = window.__landnav;
+      const paper = l.tools.map.paper.material.color;
+      return {
+        night: l.settings.night, far: l.scene.fog.far, lamp: l.headlamp.intensity, on: l.headlampOn,
+        lume: l.tools.compass.lume.visible, paper: [paper.r, paper.g, paper.b],
+        hud: document.getElementById('hud').textContent.split('\n')[0],
+      };
+    });
+    let s = await state();
+    assert.ok(s.night && s.far === 60 && s.lamp > 0 && s.on && s.lume, JSON.stringify(s));
+    assert.ok(s.paper[0] > 0.5 && s.paper[1] < 0.1, `map under red light ${s.paper}`);
+    await hudSays(/NIGHT \(headlamp on\)/);
+    // Stakes: hidden at 15 m, shown at 8 m.
+    const stakeAt = async (d) => {
+      await page.evaluate(([x, z]) => window.__t.goTo(x, z), [c.points[0].x + d, c.points[0].z]);
+      await frames(3);
+      return page.evaluate((code) => window.__landnav.run.stakes.find((t) => t.code === code).mesh.visible, c.points[0].code);
+    };
+    assert.equal(await stakeAt(15), false, 'not seen at 15 m at night');
+    assert.equal(await stakeAt(8), true, 'seen at 8 m');
+    // Headlamp off: no light, paper near black; luminous marks stay.
+    await page.keyboard.press('KeyT');
+    s = await state();
+    assert.ok(!s.on && s.lamp === 0 && s.paper.every((v) => v < 0.01) && s.lume, JSON.stringify(s));
+    await page.keyboard.press('KeyT');
+    // N doesn't switch day and night in the middle of a course.
+    await page.keyboard.press('KeyN');
+    assert.equal((await state()).night, true);
+  } finally {
+    await page.evaluate(() => { const l = window.__landnav; l.run.end(l.run.course.start); l.setNight(false); });
+  }
+  const day = await page.evaluate(() => {
+    const l = window.__landnav;
+    const p = l.tools.map.paper.material.color;
+    return { lamp: l.headlamp.intensity, paper: [p.r, p.g, p.b], lume: l.tools.compass.lume.visible, far: l.scene.fog.far };
+  });
+  assert.deepEqual(day.paper, [1, 1, 1]);
+  assert.ok(day.lamp === 0 && !day.lume && day.far > 60, JSON.stringify(day));
+});
+
 await check('Enter VR button is offered', async () => {
   await page.waitForFunction(() => !document.getElementById('vr').disabled, null, { timeout: 10000 });
   assert.equal(await page.textContent('#vr'), 'Enter VR');
@@ -721,6 +769,20 @@ await check('M3 VR: ruler along a drawn line (right stick press)', async () => {
   assert.ok(Math.abs(r.rot - Math.PI / 4) < 1e-3, `angle ${r.rot}`);
   await page.evaluate(() => { window.__landnav.tools.map.clear(); window.__xr.buttons.left[1] = false; window.__xr.pose = { left: {}, right: {} }; });
   await frames(2);
+});
+
+await check('M5 VR: the left trigger switches the headlamp at night', async () => {
+  await page.evaluate(() => window.__landnav.setNight(true));
+  try {
+    await page.evaluate(() => { window.__xr.buttons.left[0] = true; }); await frames(2);
+    await page.evaluate(() => { window.__xr.buttons.left[0] = false; }); await frames(2);
+    assert.equal(await page.evaluate(() => window.__landnav.headlampOn), false);
+    await page.evaluate(() => { window.__xr.buttons.left[0] = true; }); await frames(2);
+    await page.evaluate(() => { window.__xr.buttons.left[0] = false; }); await frames(2);
+    assert.equal(await page.evaluate(() => window.__landnav.headlampOn), true);
+  } finally {
+    await page.evaluate(() => window.__landnav.setNight(false));
+  }
 });
 
 await check('physical walking cannot leave the playable area', async () => {

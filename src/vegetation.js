@@ -164,6 +164,7 @@ export class Vegetation {
     // A touch of emissive stands in for light scattered through leaves, so shaded
     // undersides read as dark green, not black.
     const leaves = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide, emissive: 0x0e1609 });
+    this.leaves = leaves;
     const parts = { oak: oakParts(), conifer: coniferParts(), sapling: saplingParts() };
     const CAP = 2500;
     this.trees = {};
@@ -237,8 +238,9 @@ export class Vegetation {
     if (this.last && (this.last.x - x) ** 2 + (this.last.z - z) ** 2 < REFRESH_M ** 2 && this.last.q === this.settings.vegetation) return;
     this.last = { x, z, q: this.settings.vegetation };
     const q = VEGETATION_QUALITY[this.settings.vegetation] ?? VEGETATION_QUALITY.medium;
-    // In the woods preset, nothing past the fog can be seen anyway.
-    const far = this.settings.preset === 'woods' ? Math.min(q.far, this.settings.woodsVisibility + 10) : q.far;
+    // In the woods or at night, nothing past the fog can be seen anyway.
+    let far = this.settings.preset === 'woods' ? Math.min(q.far, this.settings.woodsVisibility + 10) : q.far;
+    if (this.settings.night) far = Math.min(far, this.settings.nightVisibility + 10);
     const counts = new Map();
     const put = (mesh, t, scale, yaw, color) => {
       const i = counts.get(mesh) ?? 0;
@@ -316,6 +318,14 @@ export class Vegetation {
       }
     }
     return out;
+  }
+
+  // At night the leaves lose their scattered-light glow, and the flat far-tree
+  // cut-outs (unlit) go to silhouettes.
+  setNight(on) {
+    this.leaves.emissive.setHex(on ? 0x000000 : 0x0e1609);
+    for (const m of Object.values(this.cutouts)) m.material.color.setHex(on ? 0x0a0c10 : 0xc8c8c8);
+    this.last = null;
   }
 
   // Instances drawn, for the HUD and tests.

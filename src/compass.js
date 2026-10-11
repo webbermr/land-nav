@@ -81,8 +81,34 @@ function drawDial(size = 1024) {
   return tex;
 }
 
+// Luminous paint: unlit, and left alone by the night tint (src/night.js).
+function lumeMaterial() {
+  const m = new THREE.MeshBasicMaterial({ color: LUME });
+  m.userData.lume = true;
+  return m;
+}
+
 function lumeBox(w, h, d) {
-  return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), new THREE.MeshBasicMaterial({ color: LUME }));
+  return new THREE.Mesh(new THREE.BoxGeometry(w, h, d), lumeMaterial());
+}
+
+// The dial's luminous north arrow and E and W marks, laid on the card. Only shown at
+// night; by day the printed arrow is enough.
+function dialLume() {
+  const g = new THREE.Group();
+  g.name = 'dial-lume';
+  const arrow = new THREE.Shape([
+    new THREE.Vector2(0, R * 0.55), new THREE.Vector2(-R * 0.09, R * 0.3), new THREE.Vector2(R * 0.09, R * 0.3),
+  ]);
+  g.add(new THREE.Mesh(new THREE.ShapeGeometry(arrow).rotateX(-Math.PI / 2), lumeMaterial()));
+  for (const x of [R * 0.5, -R * 0.5]) {
+    const dot = new THREE.Mesh(new THREE.CircleGeometry(R * 0.045, 16).rotateX(-Math.PI / 2), lumeMaterial());
+    dot.position.x = x;
+    g.add(dot);
+  }
+  g.position.y = 0.0003;
+  g.visible = false;
+  return g;
 }
 
 export class Compass {
@@ -114,6 +140,8 @@ export class Compass {
       new THREE.MeshBasicMaterial({ map: dialTex }),
     );
     this.card.position.y = 0.0006;
+    this.lume = dialLume();
+    this.card.add(this.lume);
     g.add(this.card);
 
     // Fixed black index line across the far edge of the card, plus a luminous dot.
@@ -182,6 +210,10 @@ export class Compass {
     g.add(lensFrame);
 
     this.drawLens(0);
+  }
+
+  setNight(on) {
+    this.lume.visible = on;
   }
 
   // Rotate the bezel by whole clicks (positive is clockwise from above).

@@ -3,6 +3,7 @@
 // (OpenStreetMap, via tools/make_features.py). Sites without it get nothing.
 import * as THREE from 'three';
 import { dataUrl } from './data-url.js';
+import { patchGround } from './ground-fx.js';
 
 // Only sites whose site.json says "features": true have the file, so others don't
 // make a request that 404s.
@@ -165,6 +166,7 @@ export function buildFeatures(features, field) {
   const groundMat = new THREE.MeshLambertMaterial({
     vertexColors: true, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4,
   });
+  groundMat.onBeforeCompile = (sh) => patchGround(sh, { snowShare: 0.7 });
   // Draw order: streams, trails, tracks, then roads on top where they cross.
   for (const kind of ['stream', 'trail', 'track', 'road']) {
     const pos = [], col = [], nor = [], idx = [];

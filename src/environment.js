@@ -36,6 +36,7 @@ export class Environment {
     // Weather's say: cloud cover 0..1, how much it darkens, cloud colour.
     this.weather = { cloud: 0, gloom: 0 };
     this.shadows = false;
+    this.hemiBase = this.hemi.intensity;
     this._v = new THREE.Vector3();
     this._m = new THREE.Matrix4();
     this._inv = new THREE.Matrix4();
@@ -81,9 +82,10 @@ export class Environment {
 
     // Light: cloud takes the sun away and leaves a soft, flat sky light.
     toColor(this.sun.color, s.sunColor);
-    this.sun.intensity = s.sunIntensity * (1 - 0.8 * THREE.MathUtils.smoothstep(w.cloud, 0.3, 0.95)) * (1 - w.gloom * 0.6);
+    this.sun.intensity = s.sunIntensity * (1 - 0.9 * THREE.MathUtils.smoothstep(w.cloud, 0.3, 0.95)) * (1 - w.gloom * 0.6);
     this.hemi.intensity = s.hemiIntensity * (1 + 0.25 * grey) * (1 - w.gloom * 0.5);
     this.hemi.color.setHex(s.dark ? 0x8a9cc8 : 0xdfe9f3);
+    this.hemiBase = this.hemi.intensity;
 
     const northGrid = sceneDirection(0, 0, conv);
     this.sky.setStars(s.stars * (1 - grey), lat, northGrid, siderealDeg(date, lon));
@@ -101,7 +103,7 @@ export class Environment {
 
   // Shadows only while the sun is up and strong enough to cast them.
   updateShadowSwitch() {
-    const want = this.shadows && this.sun.intensity > 0.25;
+    const want = this.shadows && this.sun.intensity > 0.5;
     if (want === this.sun.castShadow) return;
     this.sun.castShadow = want;
     if (!this.renderer.shadowMap.enabled && want) {

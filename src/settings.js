@@ -38,6 +38,9 @@ export const DEFAULTS = Object.freeze({
   timeOfDay: -1,              // minutes after local midnight for the sun, or -1 for the real time
   shadows: true,              // the sun casts shadows near you (trees, buildings, you)
   ambientVolume: 0.6,         // 0..1: wind, birds, insects, water, rain
+  weather: 'live',            // 'live' | 'replay' | a pick: 'clear', 'partly', 'overcast', 'fog', 'drizzle', 'rain', 'storm', 'snow', 'blizzard'
+  weatherDate: '',            // 'YYYY-MM-DD' to replay; empty: a year ago today
+  season: 'auto',             // 'auto' (from the date) | 'spring' | 'summer' | 'autumn' | 'winter'
   vegetation: 'medium',       // 'off' | 'low' | 'medium' | 'high': how far trees are drawn
   collisions: true,           // trunks, logs, rocks and buildings block you (shrubs don't)
   collisionRadius: 0.25,      // m, the walker's body

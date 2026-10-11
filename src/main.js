@@ -21,8 +21,12 @@ import { createBeadsModel, createScoreCard } from './wrist.js';
 import { Vegetation, VEGETATION_QUALITY } from './vegetation.js';
 import { forestCover, hashString } from './vegetation-logic.js';
 import { Environment, castShadows } from './environment.js';
-import { worldTime, clockText, guessUtcOffsetMin } from './sun-logic.js';
+import { worldTime, clockText, guessUtcOffsetMin, sceneDirection, localMidnight } from './sun-logic.js';
 import { Soundscape } from './soundscape.js';
+import { WeatherService, WeatherVisuals } from './weather.js';
+import { weatherEffects, phenology, seasonPhenology, dayOfYear, WEATHER_MODES, WEATHER_MODE_NAMES, SEASONS, presetWeather } from './weather-logic.js';
+import { setGroundFx } from './ground-fx.js';
+import { SWAY } from './vegetation.js';
 import { loadFeatures, buildFeatures } from './features.js';
 import { LandCover, landcoverCover, NLCD_NAMES } from './landcover.js';
 import { FeatureIndex, stakeAvoider, nearestLinePoint } from './features-logic.js';
@@ -70,6 +74,13 @@ const scene = new THREE.Scene();
 const env = new Environment(scene, renderer, null);
 scene.background = new THREE.Color().copy(env.horizon);
 scene.fog = new THREE.Fog(new THREE.Color(), 1500, 7000);
+// Weather: where it comes from (made in start(), once the site is known) and the
+// rain, snow and lightning it draws.
+let weatherService = null;
+const weatherFx = new WeatherVisuals(scene);
+let weatherNow = presetWeather('clear');
+let fx = weatherEffects(weatherNow);
+let phen = { leaf: 1, autumn: 0, spring: 0 };
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 9000);
 camera.rotation.order = 'YXZ';
@@ -90,7 +101,9 @@ const isNight = () => settings.night || env.dark;
 // Dusk closes in gradually: from the day range at the end of civil twilight to the
 // night range once the sky is properly dark.
 function fogRange() {
-  const day = settings.preset === 'woods' ? [settings.woodsVisibility * 0.15, settings.woodsVisibility] : [1500, 7000];
+  let day = settings.preset === 'woods' ? [settings.woodsVisibility * 0.15, settings.woodsVisibility] : [1500, 7000];
+  // Fog, rain and snow: you see as far as the weather report says.
+  if (fx.visibilityM < day[1]) day = [Math.min(day[0], fx.visibilityM * 0.04), Math.max(30, fx.visibilityM)];
   if (settings.night) return [2, settings.nightVisibility];
   if (!env.dark) return day;
   const k = THREE.MathUtils.smoothstep(-env.elevation, 5, 12);
@@ -164,8 +177,33 @@ let wasNight = null;
 function clockMinutes() {
   return run && run.state !== 'ended' ? courseClockMin : settings.timeOfDay;
 }
+// A replayed day puts the clock (and the sun) on that date.
+function replayDay() {
+  if (settings.weather !== 'replay' || (run && run.state !== 'ended')) return '';
+  if (settings.weatherDate) return settings.weatherDate;
+  const d = new Date(Date.now() - 365 * 86400000);
+  return d.toISOString().slice(0, 10);
+}
 function worldDate() {
-  return worldTime(Date.now(), clockMinutes(), env.offsetMin);
+  return worldTime(Date.now(), clockMinutes(), env.offsetMin, replayDay());
+}
+
+// The weather and season for the world clock, and what they do to the scene.
+function updateWeather(date) {
+  if (weatherService) {
+    const minute = (date.getTime() - localMidnight(date, env.offsetMin)) / 60000;
+    weatherNow = weatherService.get(settings.weather, { date: replayDay(), minuteOfDay: minute });
+    if (weatherService.offsetMin !== null && settings.weather !== 'pick') env.offsetMin = weatherService.offsetMin;
+  }
+  fx = weatherEffects(weatherNow);
+  env.weather = { cloud: fx.cloud, gloom: fx.gloom };
+  const site = env.site;
+  phen = settings.season === 'auto'
+    ? phenology(dayOfYear(date, env.offsetMin), site?.center_lat ?? 38.5, site ? site.elev_ref + (site.elev_max - site.elev_min) / 2 : 300)
+    : seasonPhenology(settings.season);
+  setGroundFx(phen, fx);
+  vegetation?.setSeason(phen);
+  vegetation?.setVisibility(fx.visibilityM);
 }
 // Every half second (or at once with force): move the sun, recolour the sky, and
 // switch night rules on or off when dusk or dawn passes.
@@ -173,11 +211,13 @@ function updateWorldClock(force = false) {
   const now = performance.now();
   if (!force && now < clockNext) return;
   clockNext = now + 500;
-  env.setTime(worldDate(), { forceNight: settings.night });
+  const date = worldDate();
+  updateWeather(date);
+  env.setTime(date, { forceNight: settings.night });
   // After dark, far things fade into the dark ground, not the pale strip of sky.
   scene.fog.color.copy(env.horizon).multiplyScalar(isNight() ? 0.3 : 1);
   scene.background.copy(env.horizon);
-  if (env.dark && !settings.night) [scene.fog.near, scene.fog.far] = fogRange();
+  if (!settings.night) [scene.fog.near, scene.fog.far] = fogRange();
   // Unlit far-tree cut-outs follow the light level.
   vegetation?.setLight(Math.min(1, env.hemi.intensity / 0.95 * 0.6 + env.sun.intensity / 2.2 * 0.4));
   const night = isNight();
@@ -362,6 +402,7 @@ function onSettingChange(key) {
   if (key === 'vegetation') applyCanopyRange();
   if (key === 'timeOfDay') setTimeOfDay(settings.timeOfDay);
   if (key === 'shadows') env.setShadows(settings.shadows);
+  if (key === 'weather' || key === 'weatherDate' || key === 'season') applyPreset();
 }
 buildSettingsPanel(panel, settings, onSettingChange);
 
@@ -390,6 +431,26 @@ const head = new THREE.Vector3();
 const lastHeading = new THREE.Vector3(0, 0, -1);
 let snapArmed = true;
 
+// ---- Weather, every frame: rain and snow around you, lightning, wind ----
+
+const windTo = new THREE.Vector3();
+function updateWeatherFrame(dt) {
+  const d = sceneDirection(weatherNow.windFromDeg + 180, 0, env.site?.convergence_deg ?? 0);
+  windTo.set(d.x, 0, d.z).multiplyScalar(weatherNow.windMs);
+  const light = Math.min(1, env.hemi.intensity / 0.95);
+  weatherFx.update(dt, head, fx, windTo, light, weatherNow.thunder, (metres) => {
+    // Thunder arrives at the speed of sound.
+    setTimeout(() => soundscape.ctx && soundscape.thunder(Math.max(0.3, 1 - metres / 6000)), (metres / 343) * 1000);
+  });
+  // A flash lights everything for a moment.
+  env.hemi.intensity = env.hemiBase + weatherFx.flash * 2.5;
+  SWAY.time.value += dt;
+  SWAY.amp.value = 0.08 + fx.sway * 1.1;
+  // Clouds drift with the wind.
+  env.sky.uniforms.cloudShift.value.x += windTo.x * dt * 0.0006;
+  env.sky.uniforms.cloudShift.value.y += windTo.z * dt * 0.0006;
+}
+
 // ---- Nature sounds (src/soundscape.js) ----
 
 const listenFwd = new THREE.Vector3(), listenUp = new THREE.Vector3();
@@ -415,12 +476,13 @@ function updateSound(dt) {
     heightAboveGround: head.y - terrain.heightAt(head.x, head.z),
     stream: streamNear,
     rainMmH: w.rainMmH, snowing: w.snowing, tempC: w.tempC, thunder: w.thunder,
-    month, leafOn: w.leafOn ?? 1,
+    month, leafOn: w.leafOn,
   });
 }
 // The weather as the sound and light see it. Fair and breezy until weather.js says otherwise.
 function weatherState() {
-  return { windMs: 3, rainMmH: 0, snowing: false, tempC: undefined, thunder: false };
+  const w = weatherNow;
+  return { windMs: w.windMs, rainMmH: w.rainMmH, snowing: w.snowCmH > 0, tempC: w.tempC, thunder: false, leafOn: phen.leaf };
 }
 
 // ---- In-headset menu (hold X) ----
@@ -450,6 +512,12 @@ const MENU_ITEMS = [
   { label: 'Time of day', value: () => timeOfDayText(), enabled: () => !courseRunning(), repeat: true,
     press: (d) => setTimeOfDay(cycle(TIME_CHOICES, settings.timeOfDay, d)) },
   { label: 'Headlamp', value: () => onOff(headlampOn), enabled: () => isNight(), press: () => toggleHeadlamp() },
+  { label: 'Weather', value: () => WEATHER_MODE_NAMES[settings.weather] ?? settings.weather,
+    press: (d) => changeSetting('weather', cycle(WEATHER_MODES, settings.weather, d)) },
+  { label: 'Replay date', value: () => replayDay() || '-', enabled: () => settings.weather === 'replay' && !courseRunning(), repeat: true,
+    press: (d) => changeSetting('weatherDate', shiftDate(replayDay(), d)) },
+  { label: 'Season', value: () => (settings.season === 'auto' ? 'From the date' : settings.season[0].toUpperCase() + settings.season.slice(1)),
+    press: (d) => changeSetting('season', cycle(SEASONS, settings.season, d)) },
   { label: 'Fly', value: () => onOff(fly), enabled: () => !courseRunning(), press: () => setFly(!fly) },
   { label: 'Teleport range', value: () => `${settings.teleportRange} m`,
     press: (d) => changeSetting('teleportRange', cycle([20, 40, 60, 100, 150], settings.teleportRange, d)) },
@@ -476,6 +544,12 @@ const MENU_ITEMS = [
   { label: "Allow 'show my position'", value: () => onOff(settings.lostHelp), press: () => changeSetting('lostHelp', !settings.lostHelp) },
   { label: 'Close', press: () => vrMenu.hide() },
 ];
+// A day earlier or later, never past yesterday (there's no record of tomorrow yet).
+function shiftDate(ymd, days) {
+  const t = Date.parse(`${ymd}T12:00:00Z`) + days * 86400000;
+  const latest = Date.now() - 86400000;
+  return new Date(Math.min(t, latest)).toISOString().slice(0, 10);
+}
 const vrMenu = createVrMenu(MENU_ITEMS, {
   title: 'Menu',
   hint: 'Point with the right controller, pull the trigger. Left or right side of a value steps it down or up. Hold X to close.',
@@ -1196,7 +1270,7 @@ function updateHud(dt) {
   const gait = fly ? 'FLY' : loco.lastSpeed > 0 && loco.lastGait === 'jog' ? 'JOG' : loco.tooSteepToJog ? 'WALK (too steep to jog)' : 'WALK';
   const mode = `${courseRunning() ? 'COURSE' : 'EXPLORE'}  ${gait}`;
   const lines = [
-    `${mode}  ${settings.preset}  ${clockText(env.date ?? new Date(), env.offsetMin)}${isNight() ? `  NIGHT (headlamp ${headlampOn ? 'on' : 'off'})` : ''}  ${fps.toFixed(0)} fps  ${info.calls} calls  ${(info.triangles / 1000).toFixed(0)}k tris`,
+    `${mode}  ${settings.preset}  ${clockText(env.date ?? new Date(), env.offsetMin)}${isNight() ? `  NIGHT (headlamp ${headlampOn ? 'on' : 'off'})` : ''}  ${weatherNow.label}  ${fps.toFixed(0)} fps  ${info.calls} calls  ${(info.triangles / 1000).toFixed(0)}k tris`,
   ];
   // Never show the true position or the pace count during a run. Debug only.
   if (debug) {
@@ -1326,6 +1400,11 @@ async function start() {
   const [data, mapTexture] = await Promise.all([loadSite(base), loadMapTexture(base)]);
   env.site = data.site;
   env.offsetMin = guessUtcOffsetMin(data.site.center_lon, new Date());
+  weatherService = new WeatherService(data.site);
+  // ?weather=<mode>, ?date=YYYY-MM-DD, ?season=<season>: for checks and screenshots.
+  if (WEATHER_MODES.includes(params.get('weather'))) settings.weather = params.get('weather');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(params.get('date') || '')) settings.weatherDate = params.get('date');
+  if (SEASONS.includes(params.get('season'))) settings.season = params.get('season');
   // ?time=HH:MM puts the sun at that local time (for checks and screenshots).
   if (/^\d{1,2}:\d{2}$/.test(params.get('time') || '')) {
     const [hh, mm] = params.get('time').split(':').map(Number);
@@ -1399,6 +1478,7 @@ async function start() {
     camera.getWorldPosition(head);
     updateWorldClock();
     env.follow(head);
+    updateWeatherFrame(dt);
     updateSound(dt);
     vegetation.update(head.x, head.z);
     renderer.render(scene, camera);
@@ -1412,7 +1492,8 @@ async function start() {
     get lastRun() { return lastRun; },
     get xrJog() { return xrJog; },
     get fly() { return fly; },
-    teleporter, teleportTo, env, soundscape, applyPreset,
+    teleporter, teleportTo, env, soundscape, applyPreset, weatherFx,
+    get weather() { return { service: weatherService, now: weatherNow, fx, phen }; },
     vrMenu, setFly,
     headlamp, setNight, toggleHeadlamp, get headlampOn() { return headlampOn; },
     showReview, hideReview, reviewBoard,

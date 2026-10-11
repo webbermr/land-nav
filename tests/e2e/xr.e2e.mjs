@@ -32,7 +32,7 @@ page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 await page.addInitScript(mock);
 const BEACON = { x: 1150, z: 880 };
-await page.goto(`${base}?site=demo-synthetic&time=12:00&debug&beacon=${BEACON.x},${BEACON.z}`, { waitUntil: 'load' });
+await page.goto(`${base}?site=demo-synthetic&time=12:00&weather=clear&season=summer&debug&beacon=${BEACON.x},${BEACON.z}`, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__landnav?.tools, null, { timeout: 60000 });
 await page.evaluate(() => { document.getElementById('help').hidden = true; });
 // Walking checks measure exact distances, so trees mustn't get in the way. The
@@ -395,7 +395,7 @@ await check('Trees: drawn around you, never on a stake, and the quality setting 
     l.settings.vegetation = 'medium';
     return s;
   });
-  assert.deepEqual(off, { near: 0, cut: 0, clutter: 0 });
+  assert.deepEqual(off, { near: 0, cut: 0, clutter: 0, bare: 0 });
   await page.evaluate(() => { const l = window.__landnav; l.settings.preset = 'open'; l.vegetation.setPreset('open'); l.run.end(l.run.course.start); });
 });
 
@@ -527,7 +527,7 @@ await check('Explore (desktop): Q teleports to the ground mid-screen; not during
 });
 
 await check('Sun and clock: noon sun casts shadows; 23:00 is dark with night rules and stars; a course keeps its own time', async () => {
-  const state = async () => (await page.waitForTimeout(300), page.evaluate(() => {
+  const state = async () => (await frames(4), page.evaluate(() => {
     const l = window.__landnav;
     return {
       elev: l.env.elevation, dark: l.env.dark, cast: l.env.sun.castShadow, mapOn: l.renderer.shadowMap.enabled,
@@ -559,6 +559,55 @@ await check('Sun and clock: noon sun casts shadows; 23:00 is dark with night rul
   await page.keyboard.press('KeyH');
   await page.keyboard.press('KeyH');
   await page.waitForFunction(() => window.__landnav.soundscape.ctx, null, { timeout: 5000 });
+});
+
+await check('Weather: live (Open-Meteo, mocked) rains; a replayed winter day snows on bare woods; picked fog closes in', async () => {
+  const hours = [...Array(24).keys()];
+  await page.route('**/api.open-meteo.com/**', (r) => r.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({
+    utc_offset_seconds: -14400,
+    current: { time: '2026-10-11T14:00', temperature_2m: 14, relative_humidity_2m: 96, rain: 5, showers: 0, snowfall: 0, weather_code: 63,
+      cloud_cover: 100, wind_speed_10m: 6, wind_direction_10m: 240, wind_gusts_10m: 11, visibility: 2500, snow_depth: 0 },
+  }) }));
+  await page.route('**/archive-api.open-meteo.com/**', (r) => r.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({
+    utc_offset_seconds: -18000,
+    hourly: { time: hours.map((h) => `2021-02-01T${String(h).padStart(2, '0')}:00`), temperature_2m: hours.map(() => -3), weather_code: hours.map(() => 73),
+      cloud_cover: hours.map(() => 100), snowfall: hours.map(() => 1.2), rain: hours.map(() => 0), snow_depth: hours.map(() => 0.2),
+      wind_speed_10m: hours.map(() => 4), wind_direction_10m: hours.map(() => 330), relative_humidity_2m: hours.map(() => 90) },
+  }) }));
+  const state = () => page.evaluate(() => {
+    const l = window.__landnav;
+    const w = l.weather;
+    return { label: w.now.label, source: w.now.source, rain: l.scene.getObjectByName('rain').visible, snow: l.scene.getObjectByName('snow').visible,
+      far: l.scene.fog.far, wet: w.fx.wet, cover: w.fx.snowCover, leaf: w.phen.leaf, year: l.env.date.getUTCFullYear(), bare: l.vegetation.stats.bare,
+      status: w.service.status };
+  });
+  const set = (k, v) => page.evaluate(([k, v]) => { const l = window.__landnav; l.settings[k] = v; l.applyPreset(); }, [k, v]);
+  try {
+    await set('weather', 'live');
+    await page.waitForFunction(() => window.__landnav.weather.now.label === 'Rain', null, { timeout: 10000 });
+    await page.waitForTimeout(700);
+    let s = await state();
+    assert.ok(s.source === 'live' && s.rain && !s.snow && s.wet > 0.5 && s.far <= 2500, JSON.stringify(s));
+    await page.evaluate(() => { window.__landnav.settings.season = 'auto'; });
+    await page.evaluate(() => { window.__landnav.settings.weatherDate = '2021-02-01'; });
+    await set('weather', 'replay');
+    await page.waitForFunction(() => window.__landnav.weather.now.label === 'Snow', null, { timeout: 10000 });
+    await page.waitForTimeout(700);
+    s = await state();
+    assert.ok(s.year === 2021 && s.snow && !s.rain && s.cover === 1 && s.leaf === 0, JSON.stringify(s));
+    // Walk a little so the trees are redrawn for winter.
+    await page.evaluate(() => { window.__landnav.vegetation.last = null; });
+    await page.waitForTimeout(300);
+    assert.ok((await state()).bare > 0, 'bare hardwoods drawn');
+    await set('weather', 'fog');
+    await page.waitForTimeout(700);
+    s = await state();
+    assert.ok(s.far <= 130 && !s.snow && s.label === 'Fog', JSON.stringify(s));
+  } finally {
+    await page.unroute('**/api.open-meteo.com/**');
+    await page.unroute('**/archive-api.open-meteo.com/**');
+    await page.evaluate(() => { const l = window.__landnav; l.settings.season = 'summer'; l.settings.weather = 'clear'; l.applyPreset(); });
+  }
 });
 
 await check('Enter VR button is offered', async () => {

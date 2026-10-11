@@ -1,0 +1,58 @@
+{
+  "id": "home-night-1",
+  "site": "home",
+  "name": "Home Night 1",
+  "seed": 877885,
+  "time_limit_min": 150,
+  "pass_threshold": 3,
+  "preset": "woods",
+  "start": {
+    "x": 785,
+    "z": 785
+  },
+  "points": [
+    {
+      "code": "F8",
+      "x": 665,
+      "z": 1095
+    },
+    {
+      "code": "U7",
+      "x": 875,
+      "z": 1035
+    },
+    {
+      "code": "V9",
+      "x": 1175,
+      "z": 1165
+    },
+    {
+      "code": "H4",
+      "x": 1065,
+      "z": 1445
+    }
+  ],
+  "decoys": [
+    {
+      "code": "Y8",
+      "x": 735,
+      "z": 945
+    },
+    {
+      "code": "B6",
+      "x": 1035,
+      "z": 945
+    },
+    {
+      "code": "P2",
+      "x": 615,
+      "z": 845
+    },
+    {
+      "code": "X9",
+      "x": 455,
+      "z": 1025
+    }
+  ],
+  "night": true
+}

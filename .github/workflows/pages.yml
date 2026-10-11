@@ -64,9 +64,17 @@ jobs:
       - uses: actions/checkout@v7
       - name: Assemble site
         # Only what the browser needs. Tools, tests and source DEMs stay out.
+        # Code goes under v/<commit>/ so each deploy gets fresh URLs. Browsers keep
+        # Pages files for 10 minutes and a normal reload doesn't refetch them, so
+        # without this a reload could pair a new page with old code.
         run: |
-          mkdir _site
-          cp -r index.html src vendor sites _site/
+          V="v/${GITHUB_SHA::12}"
+          mkdir -p "_site/$V"
+          cp -r src vendor "_site/$V/"
+          cp -r sites _site/
+          sed -e "s#\./vendor/#./$V/vendor/#g" -e "s#\./src/main\.js#./$V/src/main.js#" index.html > _site/index.html
+          grep -q "$V/src/main.js" _site/index.html
+          grep -q "$V/vendor/three/three.module.js" _site/index.html
           touch _site/.nojekyll
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

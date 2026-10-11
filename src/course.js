@@ -93,6 +93,7 @@ export class CourseRun {
     this.beads = new BeadCounter();
     this.log = new RunLog();
     this.result = null;
+    this.reveals = 0;         // times the user asked to see their position
     this.ideal = idealDistance(course);
 
     this.group = new THREE.Group();
@@ -184,6 +185,12 @@ export class CourseRun {
     this.row = (this.row + delta + n) % n;
   }
 
+  // The lost lifeline: counted, logged with the true position, shown in the result.
+  revealPosition(pos) {
+    this.reveals++;
+    this.log.event('reveal', this.elapsed, { x: pos.x, z: pos.z });
+  }
+
   slideBead(pos) {
     this.beads.slide(this.elapsed, pos);
   }
@@ -202,6 +209,7 @@ export class CourseRun {
       reason,
       walked: this.log.distance(),
       ideal: this.ideal,
+      reveals: this.reveals,
     };
     this.log.event('end', this.elapsed, { reason, endedAtStart });
     saveHistory({
@@ -211,6 +219,7 @@ export class CourseRun {
       correct: this.result.correct,
       total: this.result.total,
       pass: this.result.pass,
+      reveals: this.reveals,
       elapsedSec: Math.round(this.elapsed),
     });
     return this.result;

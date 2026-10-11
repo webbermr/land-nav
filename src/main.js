@@ -211,6 +211,7 @@ addEventListener('keydown', (e) => {
     run.selectRow(e.code === 'ArrowUp' ? -1 : 1);
   }
   if (e.code === 'Enter' && run && run.state !== 'ended') requestEndCourse();
+  if (e.code === 'KeyK') showMyPosition();
   if (e.code === 'KeyL' && tools?.desktopMap) showToast(RULER_MESSAGES[tools.map.toggleRuler()]);
   if ((e.code === 'Delete' || e.code === 'Backspace') && tools?.desktopMap) {
     showToast(tools.desktopErase() ? 'Dot erased.' : 'Point at a dot, then press Delete to erase it.');
@@ -280,6 +281,7 @@ function updateDesktop(dt) {
     const floor = terrain.heightAt(player.position.x, player.position.z) + 0.5;
     if (player.position.y < floor) player.position.y = floor;
     boundaryWarning = '';
+    courseTick(dt, player.position.x, player.position.z, false);
     return;
   }
 
@@ -426,6 +428,39 @@ async function startCourse(course) {
   return run;
 }
 
+// The lost lifeline: a brief "you are here" on the map. Never automatic, always
+// counted when a course is running, and it can be switched off in Settings.
+let revealUntil = 0;
+function showMyPosition() {
+  if (!tools) return;
+  if (!settings.lostHelp) {
+    showToast("Showing your position is switched off in Settings.");
+    return;
+  }
+  const p = currentPos();
+  let az;
+  if (renderer.xr.isPresenting) {
+    camera.getWorldDirection(fwd);
+    az = gridAzimuth(fwd.x, fwd.z);
+  } else {
+    az = gridAzimuth(-Math.sin(input.yaw), -Math.cos(input.yaw));
+    if (!tools.desktopMap) {
+      tools.toggleDesktopMap();
+      input.lookEnabled = false;
+      if (document.pointerLockElement) document.exitPointerLock();
+    }
+  }
+  tools.map.showPosition(p.x, p.z, az);
+  revealUntil = performance.now() + settings.lostHelpSec * 1000;
+  let msg = `You are here: the red arrow on the map, for ${settings.lostHelpSec} s.`;
+  if (run && run.state !== 'ended') {
+    run.revealPosition(p);
+    msg += ` Used ${run.reveals} time${run.reveals === 1 ? '' : 's'} this course.`;
+  }
+  if (renderer.xr.isPresenting) msg += ' Hold the left grip to see the map.';
+  showToast(msg);
+}
+
 let endConfirmUntil = 0;
 function requestEndCourse() {
   if (performance.now() < endConfirmUntil) {
@@ -453,6 +488,10 @@ function finishCourse(reason) {
 }
 
 function courseTick(dt, x, z, moving) {
+  if (revealUntil && performance.now() > revealUntil) {
+    revealUntil = 0;
+    tools?.map.hidePosition();
+  }
   if (!run) return;
   const wasRunning = run.state === 'running';
   run.update(dt, { x, z }, { moving, mapOut: tools?.map.group.visible, compassOut: tools?.compass.group.visible });
@@ -482,6 +521,7 @@ function holdButton(hand, button, holdSec, { onTap, onHold }) {
 
 function updateXRCourseControls() {
   if (xrInput.justPressed('left', 'primary')) setCardShown(!wrist.cardShown);
+  holdButton('left', 'stick', 1, { onHold: () => { showMyPosition(); xrInput.pulse('left', 0.6, 60); } });
   if (!run) return;
   const pos = { x: head.x, z: head.z };
   holdButton('right', 'primary', 1, {

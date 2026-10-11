@@ -60,7 +60,7 @@ export function createScoreCard() {
   // run: CourseRun or null. hints: control reminder line for this mode.
   const draw = (run, hints) => {
     const clock = run ? Math.floor(run.elapsed) : 0;
-    const key = run ? JSON.stringify([run.course.id, run.state, clock, run.row, run.entries, hints]) : 'none';
+    const key = run ? JSON.stringify([run.course.id, run.state, clock, run.row, run.entries, run.reveals, hints]) : 'none';
     if (key === lastKey) return;
     lastKey = key;
     g.fillStyle = '#f7f3e3';
@@ -131,6 +131,15 @@ export function createScoreCard() {
       if (res.correct < run.course.pass_threshold) notes.push(`needed ${run.course.pass_threshold}`);
       if (notes.length) { g.fillText(notes.join(', '), 30, y); y += 38; }
       g.fillText(`Walked ${(res.walked / 1000).toFixed(2)} km, ideal ${(res.ideal / 1000).toFixed(2)} km`, 30, y);
+      y += 38;
+      if (res.reveals) {
+        g.fillText(`Position shown ${res.reveals} time${res.reveals === 1 ? '' : 's'}`, 30, y);
+        y += 38;
+      }
+    } else if (run.reveals) {
+      g.fillStyle = '#7a4b00';
+      g.fillText(`Position shown ${run.reveals} time${run.reveals === 1 ? '' : 's'}`, 30, y);
+      g.fillStyle = '#111';
       y += 38;
     }
     g.fillStyle = '#555';

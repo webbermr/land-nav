@@ -32,6 +32,8 @@ export const DEFAULTS = Object.freeze({
   // Tools
   units: 'deg',               // 'deg' | 'mils'
   assisted: false,
+  lostHelp: true,             // allow "show my position" (logged, shown on the score card)
+  lostHelpSec: 15,            // how long the "you are here" mark stays on the map
   compassTiltLimit: 15,       // degrees; dial sticks beyond this
   compassTiltSticks: true,
   bezelRepeatSec: 0.18,       // hold the stick to keep clicking the bezel

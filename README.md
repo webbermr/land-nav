@@ -24,6 +24,10 @@ A pass needs at least the course's pass threshold of right codes, inside the tim
 
 Below that come the result, total time, distance against ideal, how long the map and compass were out, and your pace count as it worked out on this terrain. **Download run (JSON)** saves everything: the course, the 1 s track, events, tool times, bead presses, result and settings. The last run is kept in browser storage, so **Course → Review last run** brings it back after a reload.
 
+**Explore mode and teleport.** Whenever no course is running you're exploring (the HUD says EXPLORE), and you can teleport. In VR, push the **right stick forward**: a dotted arc comes from your right controller with a ring where you'd land (green: you can; red: off the area). Let go to jump there, with a short blink. The arc throws about 60 m on flat ground (X menu: Teleport range, 20 to 150 m). On desktop, **Q** jumps to the ground in the middle of the screen. Teleport is off during a course, because it would make the pace count meaningless. You never land inside a trunk or a building.
+
+**Turning with the right stick (VR):** **snap** by default (a flick turns 30°), **smooth** (hold to turn, 90°/s, with the comfort vignette) or **off**. Set it in the X menu or Settings, along with the snap angle (15, 30 or 45°) and the smooth speed (45, 90 or 135°/s). While you hold the compass, the stick turns its bezel instead.
+
 **M6 (stretch): automatic elevation download and land cover built.** See "Build a site" below. The shared course format with the iOS trainer and GPX import aren't started.
 
 **Jog:** hold **Shift** on desktop, or tap the **left stick press** in VR (it ends once you let go of the stick for a second). Jogging is 2.7 m/s (about a 10-minute mile) with its own pace count, 52 per 100 m by default (Settings: "Jogging pace count"), because your stride is longer. Footfalls and the left-hand pulse follow that count while you jog. On grades steeper than 25%, up or down, you walk whatever you ask for, and the HUD says so. The review shows how much of each leg you jogged. If the run mixed gaits, it says so rather than turning the bead error into a single pace count.

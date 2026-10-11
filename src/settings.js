@@ -22,8 +22,9 @@ export const DEFAULTS = Object.freeze({
   hapticStrength: 0.8,        // 0..1, left controller pulse per left footfall
   hapticMs: 45,
   stickDeadzone: 0.15,
-  snapTurn: false,
+  turn: 'snap',               // right stick turning in VR: 'snap' | 'smooth' | 'off'
   snapTurnDeg: 30,
+  smoothTurnDegPerSec: 90,
   vignette: 0.5,
 
   // World
@@ -63,6 +64,8 @@ export const DEFAULTS = Object.freeze({
   flySpeed: 40,               // m/s
   flyFastMultiplier: 5,
   vrFlySpeed: 12,             // m/s, VR fly (from the in-headset menu)
+  teleportRange: 60,          // m, how far the arc throws on flat ground (Explore mode)
+  teleportFadeSec: 0.2,       // the blink around a teleport
 });
 
 export function storage() {

@@ -28,6 +28,8 @@ import { resolveCollisions } from './collision.js';
 import { analyzeRun, buildRunExport } from './aar-logic.js';
 import { drawReview, createReviewBoard, downloadRun } from './aar.js';
 import { createVrMenu, cycle } from './vr-menu.js';
+import { Teleporter } from './teleport.js';
+import { rayGround } from './teleport-logic.js';
 import { NIGHT_SKY, RED_LIGHT, NO_LIGHT, tintUnlit, createHeadlamp, HEADLAMP_INTENSITY } from './night.js';
 import { dataUrl } from './data-url.js';
 
@@ -277,6 +279,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'Enter' && run && run.state !== 'ended') requestEndCourse();
   if (e.code === 'KeyK') showMyPosition();
   if (e.code === 'KeyT') toggleHeadlamp();
+  if (e.code === 'KeyQ') teleportDesktop();
   if (e.code === 'KeyN') {
     if (run && run.state !== 'ended') showToast('Day or night is set when the course starts (Course panel).');
     else { setNight(!settings.night); showToast(settings.night ? 'Night. T switches the headlamp.' : 'Day.'); }
@@ -356,6 +359,8 @@ const MENU_ITEMS = [
     press: () => setNight(!settings.night) },
   { label: 'Headlamp', value: () => onOff(headlampOn), enabled: () => settings.night, press: () => toggleHeadlamp() },
   { label: 'Fly', value: () => onOff(fly), enabled: () => !courseRunning(), press: () => setFly(!fly) },
+  { label: 'Teleport range', value: () => `${settings.teleportRange} m`,
+    press: (d) => changeSetting('teleportRange', cycle([20, 40, 60, 100, 150], settings.teleportRange, d)) },
   { label: 'Trees', value: () => settings.vegetation[0].toUpperCase() + settings.vegetation.slice(1),
     press: (d) => changeSetting('vegetation', cycle(['off', 'low', 'medium', 'high'], settings.vegetation, d)) },
   { label: 'Trees and buildings block you', value: () => onOff(settings.collisions), press: () => changeSetting('collisions', !settings.collisions) },
@@ -364,7 +369,12 @@ const MENU_ITEMS = [
   { label: 'Time compression', value: () => `${settings.timeScale}x`, press: (d) => changeSetting('timeScale', cycle([1, 2, 3], settings.timeScale, d)) },
   { label: 'Comfort vignette', value: () => `${Math.round(settings.vignette * 100)}%`,
     press: (d) => changeSetting('vignette', cycle([0, 0.25, 0.5, 0.75, 1], settings.vignette, d)) },
-  { label: 'Snap turn', value: () => onOff(settings.snapTurn), press: () => changeSetting('snapTurn', !settings.snapTurn) },
+  { label: 'Turning (right stick)', value: () => ({ snap: 'Snap', smooth: 'Smooth', off: 'Off' })[settings.turn],
+    press: (d) => changeSetting('turn', cycle(['snap', 'smooth', 'off'], settings.turn, d)) },
+  { label: 'Snap angle', value: () => `${settings.snapTurnDeg}°`, enabled: () => settings.turn === 'snap',
+    press: (d) => changeSetting('snapTurnDeg', cycle([15, 30, 45], settings.snapTurnDeg, d)) },
+  { label: 'Smooth turn speed', value: () => `${settings.smoothTurnDegPerSec}°/s`, enabled: () => settings.turn === 'smooth',
+    press: (d) => changeSetting('smoothTurnDegPerSec', cycle([45, 90, 135], settings.smoothTurnDegPerSec, d)) },
   { label: 'Compass lens', value: () => (settings.units === 'mils' ? 'Mils' : 'Degrees'),
     press: () => changeSetting('units', settings.units === 'mils' ? 'deg' : 'mils') },
   { label: 'Assisted map readout', value: () => onOff(settings.assisted), press: () => changeSetting('assisted', !settings.assisted) },
@@ -382,6 +392,108 @@ const menuPointer = new THREE.Line(
   new THREE.LineBasicMaterial({ color: 0xffd27a }),
 );
 menuPointer.visible = false;
+
+// ---- Turning with the right stick (VR) ----
+
+// Rotate the rig about the head, so you turn on the spot.
+function rotateRig(a) {
+  camera.getWorldPosition(head);
+  const ox = player.position.x - head.x, oz = player.position.z - head.z;
+  const c = Math.cos(a), sn = Math.sin(a);
+  player.position.x = head.x + ox * c + oz * sn;
+  player.position.z = head.z - ox * sn + oz * c;
+  player.rotation.y += a;
+}
+
+// Snap: one step per flick. Smooth: continuous while held. The compass's bezel
+// and the teleport arc have the stick first. Returns how hard you're turning
+// (0..1) for the comfort vignette.
+function turnXR(dt, compassHeld) {
+  if (settings.turn === 'off' || compassHeld || teleportAiming) return 0;
+  const sx = xrInput.stick('right').x;
+  if (settings.turn === 'smooth') {
+    if (Math.abs(sx) < 0.05) return 0;
+    rotateRig(-THREE.MathUtils.degToRad(settings.smoothTurnDegPerSec) * sx * dt);
+    return Math.abs(sx);
+  }
+  if (snapArmed && Math.abs(sx) > 0.7) {
+    snapArmed = false;
+    rotateRig(THREE.MathUtils.degToRad(settings.snapTurnDeg) * (sx > 0 ? -1 : 1));
+  } else if (Math.abs(sx) < 0.3) {
+    snapArmed = true;
+  }
+  return 0;
+}
+
+// ---- Teleport (Explore mode: whenever no course is running) ----
+
+const teleporter = new Teleporter(scene, camera);
+let teleportAiming = false;
+let teleportRefusedShown = false;
+const rayPos = new THREE.Vector3(), rayDir = new THREE.Vector3();
+
+// Move so the head (VR) or player (desktop) stands at `target`, with a blink.
+function teleportTo(target) {
+  teleporter.jump(() => {
+    if (renderer.xr.isPresenting) {
+      camera.getWorldPosition(head);
+      player.position.x += target.x - head.x;
+      player.position.z += target.z - head.z;
+      camera.getWorldPosition(head);
+      const c = collide(head.x, head.z); // don't land inside a trunk or a house
+      player.position.x += c.x - head.x;
+      player.position.z += c.z - head.z;
+      player.position.y = terrain.heightAt(c.x, c.z);
+    } else {
+      const c = collide(target.x, target.z);
+      player.position.set(c.x, 0, c.z);
+      snapPlayerToGround();
+    }
+  }, settings.teleportFadeSec);
+}
+
+// VR: push the right stick forward to aim the arc, let go to jump.
+function updateTeleportXR(compassHeld) {
+  const sy = xrInput.stick('right').y;
+  const can = !courseRunning() && !fly && !compassHeld && !vrMenu.open && hands.right.ray && !teleporter.fading;
+  if (sy > 0.6 && !can) {
+    if (courseRunning() && !teleportRefusedShown) {
+      teleportRefusedShown = true;
+      showToast('Teleport is off during a course (walk it, and count your paces).');
+    }
+    teleporter.hide();
+    teleportAiming = false;
+    return;
+  }
+  if (sy > 0.6) {
+    teleportAiming = true;
+    hands.right.ray.updateMatrixWorld(true);
+    rayPos.setFromMatrixPosition(hands.right.ray.matrixWorld);
+    rayDir.set(0, 0, -1).transformDirection(hands.right.ray.matrixWorld);
+    teleporter.aim(rayPos, rayDir, { range: settings.teleportRange, heightAt: (x, z) => terrain.heightAt(x, z), size: terrain.size });
+  } else if (teleportAiming && sy < 0.3) {
+    teleportAiming = false;
+    const target = teleporter.target;
+    teleporter.hide();
+    if (target) teleportTo(target);
+    else xrInput.pulse('right', 0.3, 40); // nowhere valid to land
+  }
+  if (sy < 0.3) teleportRefusedShown = false;
+}
+
+// Desktop: Q jumps to the ground under the middle of the screen.
+function teleportDesktop() {
+  if (courseRunning()) return showToast('Teleport is off during a course.');
+  camera.getWorldPosition(rayPos);
+  camera.getWorldDirection(rayDir);
+  const hit = rayGround(rayPos, rayDir, (x, z) => terrain.heightAt(x, z), 2000);
+  const m = 1;
+  if (!hit || hit.x < m || hit.z < m || hit.x > terrain.size - m || hit.z > terrain.size - m) {
+    return showToast('Look at the ground inside the area to teleport there.');
+  }
+  if (fly) setFly(false);
+  teleportTo(hit);
+}
 
 function toggleVrMenu() {
   if (vrMenu.open) { vrMenu.hide(); return; }
@@ -490,8 +602,9 @@ function updateXR(dt) {
     if (tools) tools.updateXR(dt, xrInput);
     updateXRCourseControls();
     courseTick(dt, head.x, head.z, false);
+    const turning = turnXR(dt, !!tools?.compass.group.visible);
     const moving = Math.min(1, Math.hypot(stick.x, stick.y) + Math.abs(climb));
-    vignette.update(settings.vignette * moving, dt);
+    vignette.update(settings.vignette * Math.max(moving, turning), dt);
     boundaryWarning = '';
     return;
   }
@@ -525,23 +638,11 @@ function updateXR(dt) {
   courseTick(dt, head.x, head.z, step.dx !== 0 || step.dz !== 0);
 
   // Snap turn (off by default): rotate the rig about the head.
-  if (settings.snapTurn && !compassHeld) {
-    const sx = xrInput.stick('right').x;
-    if (snapArmed && Math.abs(sx) > 0.7) {
-      snapArmed = false;
-      const a = THREE.MathUtils.degToRad(settings.snapTurnDeg) * (sx > 0 ? -1 : 1);
-      const ox = player.position.x - head.x, oz = player.position.z - head.z;
-      const c = Math.cos(a), sn = Math.sin(a);
-      player.position.x = head.x + ox * c + oz * sn;
-      player.position.z = head.z - ox * sn + oz * c;
-      player.rotation.y += a;
-    } else if (Math.abs(sx) < 0.3) {
-      snapArmed = true;
-    }
-  }
+  updateTeleportXR(compassHeld);
+  const turning = turnXR(dt, compassHeld);
 
   const full = settings.baseSpeed * settings.timeScale;
-  vignette.update(settings.vignette * Math.min(1, loco.lastSpeed / full), dt);
+  vignette.update(settings.vignette * Math.max(Math.min(1, loco.lastSpeed / full), turning), dt);
   updateBoundaryWarning(head.x, head.z);
 }
 
@@ -984,7 +1085,8 @@ function updateHud(dt) {
     fpsTime = 0;
   }
   const info = renderer.info.render;
-  const mode = fly ? 'FLY' : loco.lastSpeed > 0 && loco.lastGait === 'jog' ? 'JOG' : loco.tooSteepToJog ? 'WALK (too steep to jog)' : 'WALK';
+  const gait = fly ? 'FLY' : loco.lastSpeed > 0 && loco.lastGait === 'jog' ? 'JOG' : loco.tooSteepToJog ? 'WALK (too steep to jog)' : 'WALK';
+  const mode = `${courseRunning() ? 'COURSE' : 'EXPLORE'}  ${gait}`;
   const lines = [
     `${mode}  ${settings.preset}${settings.night ? `  NIGHT (headlamp ${headlampOn ? 'on' : 'off'})` : ''}  ${fps.toFixed(0)} fps  ${info.calls} calls  ${(info.triangles / 1000).toFixed(0)}k tris`,
   ];
@@ -1170,6 +1272,7 @@ async function start() {
     const dt = Math.min(timer.getDelta(), 0.1);
     if (renderer.xr.isPresenting) updateXR(dt);
     else updateDesktop(dt);
+    teleporter.tick(dt);
     // Trees and sky follow the viewer.
     camera.getWorldPosition(head);
     sky.position.copy(head);
@@ -1185,6 +1288,7 @@ async function start() {
     get lastRun() { return lastRun; },
     get xrJog() { return xrJog; },
     get fly() { return fly; },
+    teleporter, teleportTo,
     vrMenu, setFly,
     headlamp, setNight, toggleHeadlamp, get headlampOn() { return headlampOn; },
     showReview, hideReview, reviewBoard,

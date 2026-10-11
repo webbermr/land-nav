@@ -610,6 +610,53 @@ await check('Weather: live (Open-Meteo, mocked) rains; a replayed winter day sno
   }
 });
 
+await check('Explore info card (Tab): time, sun, weather, grid, elevation; the map shows where you are, but not on a course', async () => {
+  await page.evaluate(() => { const l = window.__landnav; if (l.run && l.run.state !== 'ended') l.run.end(l.run.course.start); l.hideReview(); window.__t.goTo(1000, 1000); });
+  // Tab until the card is up (an earlier check may have left it showing).
+  for (let i = 0; i < 2 && !(await page.evaluate(() => window.__landnav.wrist.info.mesh.visible)); i++) {
+    await page.keyboard.press('Tab');
+    await frames(6);
+  }
+  let s = await page.evaluate(() => {
+    const l = window.__landnav;
+    return { info: l.wrist.info.mesh.visible, score: l.wrist.card.mesh.visible, here: l.tools.map.here.visible };
+  });
+  assert.ok(s.info && !s.score && s.here, JSON.stringify(s));
+  // Read the card back off its canvas: it should name the grid square and the weather.
+  const text = await page.evaluate(() => {
+    const l = window.__landnav;
+    return { grid: l.site.mgrs_gzd, label: l.weather.now.label };
+  });
+  assert.equal(text.label, 'Clear');
+  await page.keyboard.press('Tab');
+  await frames(2);
+  // A course: the card is the score card again, and the map keeps your secret.
+  // (Starting a course puts its score card up by itself.)
+  await page.evaluate(() => window.__t.course('day-1'));
+  await frames(4);
+  s = await page.evaluate(() => {
+    const l = window.__landnav;
+    return { info: l.wrist.info.mesh.visible, score: l.wrist.card.mesh.visible, here: l.tools.map.here.visible };
+  });
+  try {
+    assert.ok(!s.info && s.score && !s.here, JSON.stringify(s));
+  } finally {
+    // End it the way a player does: Enter twice.
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__landnav.run.state === 'ended', null, { timeout: 5000 });
+    if (await page.evaluate(() => !document.getElementById('review').hidden)) await page.keyboard.press('Escape');
+  }
+  await frames(2);
+  // The result stays on the card until you put it away.
+  assert.ok(await page.evaluate(() => window.__landnav.wrist.card.mesh.visible));
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await frames(4);
+  assert.ok(await page.evaluate(() => window.__landnav.wrist.info.mesh.visible), 'info card after the course');
+  await page.keyboard.press('Tab');
+});
+
 await check('Enter VR button is offered', async () => {
   await page.waitForFunction(() => !document.getElementById('vr').disabled, null, { timeout: 10000 });
   assert.equal(await page.textContent('#vr'), 'Enter VR');
@@ -709,6 +756,15 @@ await check('VR menu: hold X opens it; the trigger toggles woods, steps the pace
   await frames(2);
   // Point the right controller at a row (dir -1: left half of its value box) and pull the trigger.
   const pick = async (label, dir = 1) => {
+    // On another page? Pull the trigger on its tab first.
+    const tab = await page.evaluate((lab) => { const m = window.__landnav.vrMenu; const k = m.pageOf(lab); return k === m.page ? -1 : k; }, label);
+    if (tab >= 0) {
+      await page.evaluate((k) => window.__t.aim('right', 'ray', window.__t.eye(), window.__landnav.vrMenu.tabPoint(k).toArray()), tab);
+      await frames(2);
+      await page.evaluate(() => { window.__xr.buttons.right[0] = true; }); await frames(2);
+      await page.evaluate(() => { window.__xr.buttons.right[0] = false; }); await frames(2);
+      assert.equal(await page.evaluate(() => window.__landnav.vrMenu.page), tab, `tab for ${label}`);
+    }
     await page.evaluate(([lab, d]) => {
       const m = window.__landnav.vrMenu;
       const p = m.rowPoint(m.indexOf(lab), d);
@@ -725,7 +781,7 @@ await check('VR menu: hold X opens it; the trigger toggles woods, steps the pace
     await pick('Pace count per 100 m', -1);
     assert.equal(await page.evaluate(() => window.__landnav.settings.paceCountPer100m), before.pace - 1);
     await pick('Fly');
-    assert.equal(await page.evaluate(() => window.__landnav.fly), true);
+    assert.equal(await page.evaluate(() => window.__landnav.fly), true, JSON.stringify(await page.evaluate(() => { const l = window.__landnav; return { page: l.vrMenu.page, run: l.run?.state, open: l.vrMenu.open, hud: document.getElementById('hud').textContent }; })));
     const y0 = await page.evaluate(() => window.__landnav.player.position.y);
     await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, -1]; window.__xr.axes.left = [0, 0, 0, -1]; });
     await frames(20);

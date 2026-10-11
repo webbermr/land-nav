@@ -12,19 +12,22 @@ import { Locomotion } from './locomotion.js';
 import { Footfalls } from './footfalls.js';
 import { createVignette } from './vignette.js';
 import { buildSettingsPanel, setupVRButton } from './ui.js';
-import { gridAzimuth, gridToMagnetic } from './coords.js';
+import { gridAzimuth, gridToMagnetic, eightDigitGrid, sceneToUtm } from './coords.js';
 import { Tools } from './tools.js';
 import { loadMapTexture } from './map.js';
 import { CourseRun, loadCourse, loadCourseIndex, formatClock } from './course.js';
 import { generateCourse, validateCourse } from './course-logic.js';
 import { createBeadsModel, createScoreCard } from './wrist.js';
+import { createInfoCard } from './info-card.js';
+import { compassPoint, formatTemp, formatWind, formatDistance, formatElevation, formatLatLon, formatDay, utcLabel } from './info-logic.js';
+import { fromUtm } from './utm.js';
 import { Vegetation, VEGETATION_QUALITY } from './vegetation.js';
 import { forestCover, hashString } from './vegetation-logic.js';
 import { Environment, castShadows } from './environment.js';
-import { worldTime, clockText, guessUtcOffsetMin, sceneDirection, localMidnight } from './sun-logic.js';
+import { worldTime, clockText, guessUtcOffsetMin, sceneDirection, localMidnight, sunTimes } from './sun-logic.js';
 import { Soundscape } from './soundscape.js';
 import { WeatherService, WeatherVisuals } from './weather.js';
-import { weatherEffects, phenology, seasonPhenology, dayOfYear, WEATHER_MODES, WEATHER_MODE_NAMES, SEASONS, presetWeather } from './weather-logic.js';
+import { weatherEffects, phenology, seasonPhenology, dayOfYear, WEATHER_MODES, WEATHER_MODE_NAMES, SEASONS, presetWeather, seasonName } from './weather-logic.js';
 import { setGroundFx } from './ground-fx.js';
 import { SWAY } from './vegetation.js';
 import { loadFeatures, buildFeatures } from './features.js';
@@ -131,6 +134,7 @@ function applyPreset() {
 function applyNightTint() {
   const tint = isNight() ? (headlampOn ? RED_LIGHT : NO_LIGHT) : null;
   for (const root of [tools?.compass.group, tools?.map.group, wrist.card.mesh, run?.group]) tintUnlit(root, tint);
+  tintUnlit(wrist.info.mesh, tint);
 }
 
 function setNight(on) {
@@ -253,7 +257,9 @@ let lastRun = null;      // the last finished run (buildRunExport), for the revi
 const reviewBoard = createReviewBoard();
 scene.add(reviewBoard.mesh);
 let run = null;        // the current CourseRun, if a course is loaded
-const wrist = { beads: createBeadsModel(), card: createScoreCard(), cardShown: false };
+// The card on the wrist is the score card during a course (and its result after),
+// and the info card when exploring.
+const wrist = { beads: createBeadsModel(), card: createScoreCard(), info: createInfoCard(), cardShown: false, showResult: false };
 applyPreset();
 const coursePanel = document.getElementById('course');
 let boundaryWarning = '';
@@ -506,43 +512,55 @@ function setFly(on) {
   if (!fly && terrain) snapPlayerToGround();
 }
 const step = (key, lo, hi) => (dir) => changeSetting(key, Math.min(hi, Math.max(lo, settings[key] + dir)));
-const MENU_ITEMS = [
-  { label: 'Woods or open', value: () => (settings.preset === 'woods' ? 'Woods' : 'Open'),
-    press: () => { settings.preset = settings.preset === 'woods' ? 'open' : 'woods'; applyPreset(); saveSettings(settings); } },
-  { label: 'Time of day', value: () => timeOfDayText(), enabled: () => !courseRunning(), repeat: true,
-    press: (d) => setTimeOfDay(cycle(TIME_CHOICES, settings.timeOfDay, d)) },
-  { label: 'Headlamp', value: () => onOff(headlampOn), enabled: () => isNight(), press: () => toggleHeadlamp() },
-  { label: 'Weather', value: () => WEATHER_MODE_NAMES[settings.weather] ?? settings.weather,
-    press: (d) => changeSetting('weather', cycle(WEATHER_MODES, settings.weather, d)) },
-  { label: 'Replay date', value: () => replayDay() || '-', enabled: () => settings.weather === 'replay' && !courseRunning(), repeat: true,
-    press: (d) => changeSetting('weatherDate', shiftDate(replayDay(), d)) },
-  { label: 'Season', value: () => (settings.season === 'auto' ? 'From the date' : settings.season[0].toUpperCase() + settings.season.slice(1)),
-    press: (d) => changeSetting('season', cycle(SEASONS, settings.season, d)) },
-  { label: 'Fly', value: () => onOff(fly), enabled: () => !courseRunning(), press: () => setFly(!fly) },
-  { label: 'Teleport range', value: () => `${settings.teleportRange} m`,
-    press: (d) => changeSetting('teleportRange', cycle([20, 40, 60, 100, 150], settings.teleportRange, d)) },
-  { label: 'Trees', value: () => settings.vegetation[0].toUpperCase() + settings.vegetation.slice(1),
-    press: (d) => changeSetting('vegetation', cycle(['off', 'low', 'medium', 'high'], settings.vegetation, d)) },
-  { label: 'Shadows', value: () => onOff(settings.shadows), press: () => changeSetting('shadows', !settings.shadows) },
-  { label: 'Nature sounds', value: () => `${Math.round(settings.ambientVolume * 100)}%`,
-    press: (d) => changeSetting('ambientVolume', cycle([0, 0.2, 0.4, 0.6, 0.8, 1], settings.ambientVolume, d)) },
-  { label: 'Trees and buildings block you', value: () => onOff(settings.collisions), press: () => changeSetting('collisions', !settings.collisions) },
-  { label: 'Pace count per 100 m', value: () => String(settings.paceCountPer100m), repeat: true, press: step('paceCountPer100m', 30, 120) },
-  { label: 'Jogging pace count', value: () => String(settings.jogPaceCountPer100m), repeat: true, press: step('jogPaceCountPer100m', 25, 100) },
-  { label: 'Time compression', value: () => `${settings.timeScale}x`, press: (d) => changeSetting('timeScale', cycle([1, 2, 3], settings.timeScale, d)) },
-  { label: 'Comfort vignette', value: () => `${Math.round(settings.vignette * 100)}%`,
-    press: (d) => changeSetting('vignette', cycle([0, 0.25, 0.5, 0.75, 1], settings.vignette, d)) },
-  { label: 'Turning (right stick)', value: () => ({ snap: 'Snap', smooth: 'Smooth', off: 'Off' })[settings.turn],
-    press: (d) => changeSetting('turn', cycle(['snap', 'smooth', 'off'], settings.turn, d)) },
-  { label: 'Snap angle', value: () => `${settings.snapTurnDeg}°`, enabled: () => settings.turn === 'snap',
-    press: (d) => changeSetting('snapTurnDeg', cycle([15, 30, 45], settings.snapTurnDeg, d)) },
-  { label: 'Smooth turn speed', value: () => `${settings.smoothTurnDegPerSec}°/s`, enabled: () => settings.turn === 'smooth',
-    press: (d) => changeSetting('smoothTurnDegPerSec', cycle([45, 90, 135], settings.smoothTurnDegPerSec, d)) },
-  { label: 'Compass lens', value: () => (settings.units === 'mils' ? 'Mils' : 'Degrees'),
-    press: () => changeSetting('units', settings.units === 'mils' ? 'deg' : 'mils') },
-  { label: 'Assisted map readout', value: () => onOff(settings.assisted), press: () => changeSetting('assisted', !settings.assisted) },
-  { label: "Allow 'show my position'", value: () => onOff(settings.lostHelp), press: () => changeSetting('lostHelp', !settings.lostHelp) },
-  { label: 'Close', press: () => vrMenu.hide() },
+// Three pages, picked with the tabs along the top.
+const MENU_PAGES = [
+  { title: 'World', items: [
+    { label: 'Time of day', value: () => timeOfDayText(), enabled: () => !courseRunning(), repeat: true,
+      press: (d) => setTimeOfDay(cycle(TIME_CHOICES, settings.timeOfDay, d)) },
+    { label: 'Weather', value: () => WEATHER_MODE_NAMES[settings.weather] ?? settings.weather,
+      press: (d) => changeSetting('weather', cycle(WEATHER_MODES, settings.weather, d)) },
+    { label: 'Replay date', value: () => replayDay() || '-', enabled: () => settings.weather === 'replay' && !courseRunning(), repeat: true,
+      press: (d) => changeSetting('weatherDate', shiftDate(replayDay(), d)) },
+    { label: 'Season', value: () => (settings.season === 'auto' ? 'From the date' : settings.season[0].toUpperCase() + settings.season.slice(1)),
+      press: (d) => changeSetting('season', cycle(SEASONS, settings.season, d)) },
+    { label: 'Woods or open', value: () => (settings.preset === 'woods' ? 'Woods' : 'Open'),
+      press: () => { settings.preset = settings.preset === 'woods' ? 'open' : 'woods'; applyPreset(); saveSettings(settings); } },
+    { label: 'Headlamp', value: () => onOff(headlampOn), enabled: () => isNight(), press: () => toggleHeadlamp() },
+    { label: 'Shadows', value: () => onOff(settings.shadows), press: () => changeSetting('shadows', !settings.shadows) },
+    { label: 'Trees', value: () => settings.vegetation[0].toUpperCase() + settings.vegetation.slice(1),
+      press: (d) => changeSetting('vegetation', cycle(['off', 'low', 'medium', 'high'], settings.vegetation, d)) },
+    { label: 'Nature sounds', value: () => `${Math.round(settings.ambientVolume * 100)}%`,
+      press: (d) => changeSetting('ambientVolume', cycle([0, 0.2, 0.4, 0.6, 0.8, 1], settings.ambientVolume, d)) },
+    { label: 'Close', press: () => vrMenu.hide() },
+  ] },
+  { title: 'Moving', items: [
+    { label: 'Fly', value: () => onOff(fly), enabled: () => !courseRunning(), press: () => setFly(!fly) },
+    { label: 'Teleport range', value: () => `${settings.teleportRange} m`,
+      press: (d) => changeSetting('teleportRange', cycle([20, 40, 60, 100, 150], settings.teleportRange, d)) },
+    { label: 'Turning (right stick)', value: () => ({ snap: 'Snap', smooth: 'Smooth', off: 'Off' })[settings.turn],
+      press: (d) => changeSetting('turn', cycle(['snap', 'smooth', 'off'], settings.turn, d)) },
+    { label: 'Snap angle', value: () => `${settings.snapTurnDeg}°`, enabled: () => settings.turn === 'snap',
+      press: (d) => changeSetting('snapTurnDeg', cycle([15, 30, 45], settings.snapTurnDeg, d)) },
+    { label: 'Smooth turn speed', value: () => `${settings.smoothTurnDegPerSec}°/s`, enabled: () => settings.turn === 'smooth',
+      press: (d) => changeSetting('smoothTurnDegPerSec', cycle([45, 90, 135], settings.smoothTurnDegPerSec, d)) },
+    { label: 'Trees and buildings block you', value: () => onOff(settings.collisions), press: () => changeSetting('collisions', !settings.collisions) },
+    { label: 'Pace count per 100 m', value: () => String(settings.paceCountPer100m), repeat: true, press: step('paceCountPer100m', 30, 120) },
+    { label: 'Jogging pace count', value: () => String(settings.jogPaceCountPer100m), repeat: true, press: step('jogPaceCountPer100m', 25, 100) },
+    { label: 'Time compression', value: () => `${settings.timeScale}x`, press: (d) => changeSetting('timeScale', cycle([1, 2, 3], settings.timeScale, d)) },
+    { label: 'Comfort vignette', value: () => `${Math.round(settings.vignette * 100)}%`,
+      press: (d) => changeSetting('vignette', cycle([0, 0.25, 0.5, 0.75, 1], settings.vignette, d)) },
+    { label: 'Close', press: () => vrMenu.hide() },
+  ] },
+  { title: 'Tools', items: [
+    { label: 'Compass lens', value: () => (settings.units === 'mils' ? 'Mils' : 'Degrees'),
+      press: () => changeSetting('units', settings.units === 'mils' ? 'deg' : 'mils') },
+    { label: 'Assisted map readout', value: () => onOff(settings.assisted), press: () => changeSetting('assisted', !settings.assisted) },
+    { label: "Allow 'show my position'", value: () => onOff(settings.lostHelp), press: () => changeSetting('lostHelp', !settings.lostHelp) },
+    { label: 'Exploring: me on the map', value: () => onOff(settings.exploreMapPosition), press: () => changeSetting('exploreMapPosition', !settings.exploreMapPosition) },
+    { label: 'Info card units', value: () => (settings.infoUnits === 'metric' ? 'Metric' : 'US'),
+      press: () => changeSetting('infoUnits', settings.infoUnits === 'metric' ? 'us' : 'metric') },
+    { label: 'Close', press: () => vrMenu.hide() },
+  ] },
 ];
 // A day earlier or later, never past yesterday (there's no record of tomorrow yet).
 function shiftDate(ymd, days) {
@@ -550,9 +568,9 @@ function shiftDate(ymd, days) {
   const latest = Date.now() - 86400000;
   return new Date(Math.min(t, latest)).toISOString().slice(0, 10);
 }
-const vrMenu = createVrMenu(MENU_ITEMS, {
+const vrMenu = createVrMenu(MENU_PAGES, {
   title: 'Menu',
-  hint: 'Point with the right controller, pull the trigger. Left or right side of a value steps it down or up. Hold X to close.',
+  hint: 'Point with the right controller and pull the trigger. The tabs pick a page; the left or right side of a value steps it down or up. Hold X to close.',
 });
 scene.add(vrMenu.mesh);
 // The right controller's pointer while the menu is open.
@@ -843,7 +861,13 @@ const HINTS = {
 
 function setCardShown(shown) {
   wrist.cardShown = shown;
-  wrist.card.mesh.visible = shown;
+  if (!shown) wrist.showResult = false;
+  updateCardKind();
+}
+function updateCardKind() {
+  const score = !!run && (run.state !== 'ended' || wrist.showResult);
+  wrist.card.mesh.visible = wrist.cardShown && score;
+  wrist.info.mesh.visible = wrist.cardShown && !score;
 }
 
 // The wrist kit lives on the left controller in VR and in the corners of the screen on desktop.
@@ -854,19 +878,23 @@ function mountWrist() {
     wrist.beads.group.position.set(-0.04, -0.06, 0.06);
     wrist.beads.group.rotation.set(0, 0, 0);
     wrist.beads.group.scale.setScalar(1);
-    grip.add(wrist.card.mesh);
-    wrist.card.mesh.position.set(0, 0.04, 0.12);
-    wrist.card.mesh.rotation.set(-1.15, 0, 0);
-    wrist.card.mesh.scale.setScalar(1);
+    for (const card of [wrist.card.mesh, wrist.info.mesh]) {
+      grip.add(card);
+      card.position.set(0, 0.04, 0.12);
+      card.rotation.set(-1.15, 0, 0);
+      card.scale.setScalar(1);
+    }
   } else {
     const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
     camera.add(wrist.beads.group);
     wrist.beads.group.position.set(-t * camera.aspect * 0.4 * 0.88, -0.06, -0.4);
     wrist.beads.group.scale.setScalar(0.9);
-    camera.add(wrist.card.mesh);
-    wrist.card.mesh.position.set(t * camera.aspect * 0.45 * 0.68, -0.02, -0.45);
-    wrist.card.mesh.rotation.set(0, 0, 0);
-    wrist.card.mesh.scale.setScalar(1.4);
+    for (const card of [wrist.card.mesh, wrist.info.mesh]) {
+      camera.add(card);
+      card.position.set(t * camera.aspect * 0.45 * 0.68, -0.02, -0.45);
+      card.rotation.set(0, 0, 0);
+      card.scale.setScalar(1.4);
+    }
   }
   wrist.beads.group.visible = !!run;
 }
@@ -904,6 +932,76 @@ async function startCourse(course, options = {}) {
   coursePanel.hidden = true;
   showToast(`${course.name}: plot your points from the score card. The clock starts when you move.`);
   return run;
+}
+
+// ---- Explore: the info card, and your position on the map ----
+
+let infoNext = 0;
+let sunDayKey = '', sunDay = null;
+const exploring = () => !run || run.state === 'ended';
+function updateExplore(x, z) {
+  updateCardKind();
+  const now = performance.now();
+  // Exploring, the map shows where you are (no penalty: there's no course).
+  if (tools) {
+    if (exploring() && settings.exploreMapPosition) tools.map.showPosition(x, z, facingGridAz());
+    else if (!revealUntil) tools.map.hidePosition();
+  }
+  if (!wrist.info.mesh.visible || now < infoNext) return;
+  infoNext = now + 500;
+  wrist.info.draw(infoCardContent(x, z));
+}
+
+function facingGridAz() {
+  if (renderer.xr.isPresenting) {
+    camera.getWorldDirection(fwd);
+    return gridAzimuth(fwd.x, fwd.z);
+  }
+  return gridAzimuth(-Math.sin(input.yaw), -Math.cos(input.yaw));
+}
+
+function infoCardContent(x, z) {
+  const site = siteData.site;
+  const u = settings.infoUnits;
+  const date = env.date ?? new Date();
+  const off = env.offsetMin;
+  const dayKey = `${Math.floor((date.getTime() + off * 60000) / 86400000)}:${off}`;
+  if (dayKey !== sunDayKey) { sunDayKey = dayKey; sunDay = sunTimes(date, site.center_lat, site.center_lon, off); }
+  const w = weatherNow;
+  const { easting, northing } = sceneToUtm(site, x, z);
+  const ll = fromUtm(easting, northing, parseInt(site.utm_zone, 10), !/S$/.test(site.utm_zone));
+  const gridAz = facingGridAz();
+  const magAz = gridToMagnetic(gridAz, site.gm_angle_deg);
+  const surface = featureIndex?.surfaceAt(x, z);
+  const cover = landcover ? NLCD_NAMES[landcover.classAt(x, z)] : null;
+  const ground = [surface, cover].filter(Boolean).join(', ') || (vegetation && vegetation.coverAt(x, z) > 0.4 ? 'woods' : 'open ground');
+  const sunUp = sunDay.rise && sunDay.set ? `up ${clockText(sunDay.rise, off)}, down ${clockText(sunDay.set, off)}` : 'no sunrise today';
+  const sunNow = env.elevation > -0.8 ? `${Math.round(env.elevation)}° up in the ${compassPoint(env.azimuth)}` : 'below the horizon';
+  const leaf = phen.leaf < 0.05 ? 'bare woods' : phen.leaf < 0.95 ? (phen.spring > 0 ? 'leafing out' : 'leaves falling') : phen.autumn > 0.2 ? 'autumn colour' : 'in leaf';
+  const source = weatherService?.status || '';
+  const hint = renderer.xr.isPresenting ? 'X hides this; hold X for the menu.' : 'Tab hides this.';
+  return {
+    title: site.name,
+    subtitle: `Exploring  ·  ${formatDay(date, off)}`,
+    rows: [
+      ['Time', `${clockText(date, off)} ${utcLabel(off)}${settings.timeOfDay >= 0 || replayDay() ? ' (set)' : ''}`],
+      ['Sun', sunUp],
+      ['', sunNow],
+      null,
+      ['Weather', w.label],
+      ['Temperature', formatTemp(w.tempC, u)],
+      ['Wind', formatWind(w.windMs, w.windFromDeg, w.gustMs, u)],
+      ['Visibility', formatDistance(w.visibilityM, u)],
+      ['Season', `${seasonName(phen)}, ${leaf}`],
+      null,
+      ['Grid', eightDigitGrid(site, x, z)],
+      ['Lat, lon', formatLatLon(ll.lat, ll.lon)],
+      ['Elevation', formatElevation(site.elev_ref + terrain.heightAt(x, z), u)],
+      ['Facing', `${Math.round(magAz)}° magnetic (${compassPoint(gridAz + (site.convergence_deg ?? 0))})`],
+      ['Ground', ground],
+    ],
+    footer: `${source}${/Open-Meteo/.test(source) ? ' (weather data by Open-Meteo.com)' : ''}. ${hint}`,
+  };
 }
 
 // The lost lifeline: a brief "you are here" on the map. Never automatic, always
@@ -961,6 +1059,7 @@ function currentPos() {
 function finishCourse(reason) {
   if (!run || run.state === 'ended') return;
   const r = run.end(currentPos(), reason);
+  wrist.showResult = true;
   setCardShown(true);
   showToast(`Course over: ${r.correct}/${r.total} correct, ${r.pass ? 'PASS' : 'FAIL'}.${reason === 'time' ? ' Out of time.' : ''}`);
   courseEnded();
@@ -1028,10 +1127,12 @@ function courseTick(dt, x, z, moving) {
     revealUntil = 0;
     tools?.map.hidePosition();
   }
+  updateExplore(x, z);
   if (!run) return;
   const wasRunning = run.state === 'running';
   run.update(dt, { x, z }, { moving, mapOut: tools?.map.group.visible, compassOut: tools?.compass.group.visible, jog: moving && loco.lastGait === 'jog' });
   if (wasRunning && run.state === 'ended') {
+    wrist.showResult = true;
     setCardShown(true);
     showToast(`Time is up: ${run.result.correct}/${run.result.total} correct, ${run.result.pass ? 'PASS' : 'FAIL'}.`);
     courseEnded();

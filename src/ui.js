@@ -8,6 +8,8 @@ const FIELDS = [
   { key: 'jogPaceCountPer100m', label: 'Jogging pace count per 100 m', type: 'number', min: 25, max: 100, step: 1 },
   { key: 'timeScale', label: 'Time compression', type: 'select', options: [[1, '1x'], [2, '2x'], [3, '3x']] },
   { key: 'slopeEffects', label: 'Slope effects', type: 'checkbox' },
+  { key: 'infoUnits', label: 'Info card units', type: 'select', text: true, options: [['us', 'US (°F, mph, ft)'], ['metric', 'Metric']] },
+  { key: 'exploreMapPosition', label: 'Exploring: show me on the map', type: 'checkbox' },
   { key: 'timeOfDay', label: 'Time of day (sun)', type: 'select',
     options: [[-1, 'Now'], ...Array.from({ length: 24 }, (_, h) => [h * 60, `${String(h).padStart(2, '0')}:00`])] },
   { key: 'shadows', label: 'Shadows', type: 'checkbox' },

@@ -29,6 +29,8 @@ export const DEFAULTS = Object.freeze({
   boundaryWarn: 50,           // m from the edge
   stakeVisibility: 40,        // m
   vegetation: 'medium',       // 'off' | 'low' | 'medium' | 'high': how far trees are drawn
+  collisions: true,           // trunks, logs, rocks and buildings block you (shrubs don't)
+  collisionRadius: 0.25,      // m, the walker's body
 
   // Tools
   units: 'deg',               // 'deg' | 'mils'

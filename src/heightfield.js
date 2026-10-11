@@ -54,6 +54,29 @@ export class Heightfield {
     return top + (bot - top) * tr;
   }
 
+  // Height of the drawn terrain mesh at (x, z). Each grid cell is two triangles split
+  // on the NE-SW diagonal (see buildChunk in terrain.js), so this is planar per
+  // triangle rather than bilinear. Things laid on the ground (roads) use it so they
+  // sit exactly on the surface you see.
+  meshHeightAt(x, z) {
+    const g = this.grid;
+    let fc = x / this.spacing;
+    let fr = z / this.spacing;
+    fc = fc < 0 ? 0 : fc > g - 1 ? g - 1 : fc;
+    fr = fr < 0 ? 0 : fr > g - 1 ? g - 1 : fr;
+    let c0 = Math.floor(fc);
+    let r0 = Math.floor(fr);
+    if (c0 >= g - 1) c0 = g - 2;
+    if (r0 >= g - 1) r0 = g - 2;
+    const tc = fc - c0;
+    const tr = fr - r0;
+    const h = this.heights;
+    const a = h[r0 * g + c0], b = h[r0 * g + c0 + 1];
+    const d = h[(r0 + 1) * g + c0], e = h[(r0 + 1) * g + c0 + 1];
+    if (tc + tr <= 1) return a + (b - a) * tc + (d - a) * tr;
+    return e + (d - e) * (1 - tc) + (b - e) * (1 - tr);
+  }
+
   // Signed grade (rise over run) in the direction of travel. Positive is uphill.
   // Uses a central difference over one grid spacing so it is smooth across cells.
   slopeAt(x, z, dirX, dirZ) {

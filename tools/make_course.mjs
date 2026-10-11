@@ -5,10 +5,14 @@
 //   node tools/make_course.mjs --site demo-synthetic --seed 1001 --id day-1 --name "Day course 1"
 //
 // Options: --points N --decoys N --time MIN --pass N --preset woods|open
+//          --start x,z (scene metres; default: the site's default_start)
+// If the site has features.json, stakes keep clear of roads, buildings, parking and
+// the campground (src/features-logic.js).
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
 import { decodeHeights, Heightfield } from '../src/heightfield.js';
 import { generateCourse, validateCourse, idealDistance } from '../src/course-logic.js';
 import { eightDigitGrid } from '../src/coords.js';
+import { FeatureIndex, stakeAvoider } from '../src/features-logic.js';
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((acc, a, i, all) => (a.startsWith('--') ? [...acc, [a.slice(2), all[i + 1]]] : acc), []),
@@ -31,7 +35,12 @@ if (args.decoys) opts.decoys = Number(args.decoys);
 if (args.time) opts.timeLimitMin = Number(args.time);
 if (args.pass) opts.passThreshold = Number(args.pass);
 if (args.preset) opts.preset = args.preset;
-if (site.default_start) opts.start = { x: site.default_start.x, z: site.default_start.z };
+if (args.start) {
+  const [x, z] = args.start.split(',').map(Number);
+  opts.start = { x, z };
+} else if (site.default_start) opts.start = { x: site.default_start.x, z: site.default_start.z };
+const featuresUrl = new URL('features.json', dir);
+if (existsSync(featuresUrl)) opts.avoid = stakeAvoider(new FeatureIndex(JSON.parse(readFileSync(featuresUrl))));
 
 const course = generateCourse(site, field, Number(args.seed), opts);
 if (args.id) course.id = args.id;

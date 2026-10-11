@@ -61,6 +61,7 @@ export function generateCourse(site, field, seed, opts = {}) {
   const ok = (p, placed) =>
     p.x >= m && p.z >= m && p.x <= size - m && p.z <= size - m
     && slopeAt(field, p.x, p.z) < o.maxSlope
+    && !(o.avoid && o.avoid(p))
     && placed.every((q) => dist(p, q) >= o.minSpacing);
 
   for (let attempt = 0; attempt < 200; attempt++) {

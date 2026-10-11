@@ -107,6 +107,38 @@ class MakeSiteTest(unittest.TestCase):
             self.assertAlmostEqual(h[row, col], plane(e, n), delta=0.02)
 
 
+    def test_make_features_from_osm(self):
+        import make_features
+        to_ll = Transformer.from_crs(f"EPSG:{EPSG}", "EPSG:4326", always_xy=True)
+        s = self.site
+
+        def node(x, z):
+            lon, lat = to_ll.transform(s["e_west"] + x, s["n_north"] - z)
+            return {"lat": lat, "lon": lon}
+
+        osm = {"elements": [
+            {"type": "way", "tags": {"highway": "service", "name": "Loop"}, "nodes": [1, 2],
+             "geometry": [node(10, 200), node(390, 200)]},
+            {"type": "way", "tags": {"building": "yes"}, "nodes": [3, 4, 5, 6, 3],
+             "geometry": [node(100, 100), node(110, 100), node(110, 110), node(100, 110), node(100, 100)]},
+            {"type": "way", "tags": {"highway": "path"}, "nodes": [7, 8],
+             "geometry": [node(9000, 9000), node(9100, 9000)]},  # far outside: dropped
+            {"type": "node", "tags": {"natural": "peak", "name": "Knob"}, **node(50, 60)},
+        ]}
+        src = Path(self.tmp.name) / "osm.json"
+        src.write_text(json.dumps(osm))
+        make_features.main(["--site", "plane", "--osm", str(src), "--out", str(self.dir.parent)])
+        f = json.loads((self.dir / "features.json").read_text())
+        self.assertEqual([(l["kind"], l["width"]) for l in f["lines"]], [("road", 4)])
+        for (x, z), (ex, ez) in zip(f["lines"][0]["pts"], [(10, 200), (390, 200)]):
+            self.assertAlmostEqual(x, ex, delta=0.02)
+            self.assertAlmostEqual(z, ez, delta=0.02)
+        self.assertEqual([a["kind"] for a in f["areas"]], ["building"])
+        self.assertEqual(len(f["areas"][0]["pts"]), 4)  # closing point dropped
+        self.assertEqual(f["points"][0]["name"], "Knob")
+        self.assertTrue(json.loads((self.dir / "site.json").read_text())["features"])
+
+
 class GuardsTest(unittest.TestCase):
     def test_rejects_area_crossing_100km_line(self):
         to_ll = Transformer.from_crs(f"EPSG:{EPSG}", "EPSG:4326", always_xy=True)

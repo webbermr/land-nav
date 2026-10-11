@@ -138,9 +138,15 @@ function instanced(geo, mat, capacity, withColor) {
   return m;
 }
 
+// Collision radii at scale 1, metres at ground level. Shrubs are walk-through.
+const TRUNK_R = { oak: 0.3, conifer: 0.28, sapling: 0.08 };
+const LOG_HALF = 2.5, LOG_R = 0.22, ROCK_R = 0.9;
+
 export class Vegetation {
-  constructor(scene, terrain, site, settings) {
+  // densityAt(x, z): optional 0..1 multiplier from site features (no trees on roads).
+  constructor(scene, terrain, site, settings, { densityAt } = {}) {
     this.terrain = terrain;
+    this.densityAt = densityAt;
     this.site = site;
     this.settings = settings;
     this.seed = hashString(site.id);
@@ -189,7 +195,8 @@ export class Vegetation {
 
   // Tree cover at a point, for colouring the ground to match.
   coverAt(x, z) {
-    return forestCover(this.seed, x, z, this.slope(x, z));
+    const c = forestCover(this.seed, x, z, this.slope(x, z));
+    return this.densityAt ? c * this.densityAt(x, z) : c;
   }
 
   slope(x, z) {
@@ -218,7 +225,7 @@ export class Vegetation {
     if (!v) {
       v = fn(tx, tz, {
         seed: this.seed, density: this.density, size: this.terrain.size,
-        slopeAt: (x, z) => this.slope(x, z), exclude: this.exclude,
+        slopeAt: (x, z) => this.slope(x, z), exclude: this.exclude, densityAt: this.densityAt,
       });
       for (const t of v) t.y = this.terrain.heightAt(t.x, t.z);
       cache.set(key, v);
@@ -282,6 +289,33 @@ export class Vegetation {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
+  }
+
+  // Trunks, logs and rocks within r of (x, z), as collision obstacles (src/collision.js).
+  // Empty when trees are switched off: you can't bump into what isn't drawn.
+  obstaclesNear(x, z, r) {
+    const out = [];
+    if ((VEGETATION_QUALITY[this.settings.vegetation] ?? VEGETATION_QUALITY.medium).near === 0) return out;
+    const t0x = Math.floor((x - r) / TILE_M), t1x = Math.floor((x + r) / TILE_M);
+    const t0z = Math.floor((z - r) / TILE_M), t1z = Math.floor((z + r) / TILE_M);
+    for (let tx = t0x; tx <= t1x; tx++) {
+      for (let tz = t0z; tz <= t1z; tz++) {
+        for (const t of this.tile(this.treeCache, tx, tz, tileTrees)) {
+          const tr = TRUNK_R[t.species] * t.scale;
+          if (Math.abs(t.x - x) < r + tr && Math.abs(t.z - z) < r + tr) out.push({ type: 'circle', x: t.x, z: t.z, r: tr });
+        }
+        for (const c of this.tile(this.clutterCache, tx, tz, tileClutter)) {
+          if (c.kind === 'rock') {
+            out.push({ type: 'circle', x: c.x, z: c.z, r: ROCK_R * c.scale });
+          } else if (c.kind === 'log') {
+            // The log lies along its local x axis, turned by rot about y.
+            const hx = Math.cos(c.rot) * LOG_HALF * c.scale, hz = -Math.sin(c.rot) * LOG_HALF * c.scale;
+            out.push({ type: 'capsule', ax: c.x - hx, az: c.z - hz, bx: c.x + hx, bz: c.z + hz, r: LOG_R * c.scale });
+          }
+        }
+      }
+    }
+    return out;
   }
 
   // Instances drawn, for the HUD and tests.

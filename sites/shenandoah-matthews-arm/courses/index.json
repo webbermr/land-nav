@@ -8,5 +8,10 @@
     "id": "matthews-arm-2",
     "name": "Matthews Arm 2 (open)",
     "file": "matthews-arm-2.json"
+  },
+  {
+    "id": "matthews-arm-3",
+    "name": "Matthews Arm 3",
+    "file": "matthews-arm-3.json"
   }
 ]

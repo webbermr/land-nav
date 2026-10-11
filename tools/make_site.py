@@ -176,7 +176,82 @@ def map_layout(map_px):
     return {"px": map_px, "area": [left, top, left + side, top + side]}
 
 
-def render_map(path, heights_abs, site, layout, contour_interval, index_interval, relief):
+def draw_features(ax, fig, features, s, ppm, x0, y0, px, paper):
+    """Roads, trails, streams, the campground and buildings, in topo-map style."""
+    import matplotlib.pyplot as plt
+    from matplotlib import patheffects
+
+    halo = [patheffects.withStroke(linewidth=6 * s, foreground=paper)]
+    area_style = {
+        'campground': dict(facecolor='#cfe3b8', edgecolor='#2f7a2f', linewidth=2.5 * s, linestyle=(0, (6, 3)), alpha=0.85, zorder=1.5),
+        'clearing': dict(facecolor='#e6ecc2', edgecolor='none', alpha=0.9, zorder=1.4),
+        'parking': dict(facecolor='#c9c6c0', edgecolor='#555', linewidth=1.5 * s, zorder=3.6),
+        'water': dict(facecolor='#9cc3e6', edgecolor='#2f6fb5', linewidth=1.5 * s, zorder=3.5),
+        'building': dict(facecolor='#111', edgecolor='#111', linewidth=1 * s, zorder=3.9),
+    }
+    for f in features.get('areas', []):
+        st = area_style.get(f['kind'])
+        if st:
+            ax.add_patch(plt.Polygon(f['pts'], closed=True, **st))
+    for f in features.get('lines', []):
+        xs = [p[0] for p in f['pts']]
+        zs = [p[1] for p in f['pts']]
+        k = f['kind']
+        if k == 'stream':
+            ax.plot(xs, zs, color='#2f6fb5', linewidth=2.4 * s, zorder=3.5, solid_capstyle='round')
+        elif k == 'road' and f.get('osm') in ('motorway', 'trunk', 'primary', 'secondary'):
+            ax.plot(xs, zs, color='#111', linewidth=8 * s, zorder=3.8, solid_capstyle='round')
+            ax.plot(xs, zs, color='#d23a2a', linewidth=4.6 * s, zorder=3.81, solid_capstyle='round')
+        elif k == 'road':
+            ax.plot(xs, zs, color='#111', linewidth=6 * s, zorder=3.8, solid_capstyle='round')
+            ax.plot(xs, zs, color='#fbfaf4', linewidth=3 * s, zorder=3.81, solid_capstyle='round')
+        elif k == 'track':
+            ax.plot(xs, zs, color='#111', linewidth=2.6 * s, linestyle=(0, (8, 3)), zorder=3.8)
+        elif k == 'trail':
+            ax.plot(xs, zs, color='#111', linewidth=2 * s, linestyle=(0, (3.5, 2.5)), zorder=3.8)
+    # One label per named line, at the middle of its longest run.
+    seen = set()
+    for f in sorted(features.get('lines', []), key=lambda f: -len(f['pts'])):
+        name = f.get('name')
+        if not name or name.lower() in seen or f['kind'] == 'stream':
+            continue
+        pts = f['pts']
+        length = sum(math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]) for i in range(len(pts) - 1))
+        if length < 250:
+            continue
+        seen.add(name.lower())
+        half, acc = length / 2, 0
+        for i in range(len(pts) - 1):
+            seg = math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
+            if acc + seg >= half:
+                t = (half - acc) / seg if seg else 0
+                mx = pts[i][0] + t * (pts[i + 1][0] - pts[i][0])
+                mz = pts[i][1] + t * (pts[i + 1][1] - pts[i][1])
+                ang = math.degrees(math.atan2(-(pts[i + 1][1] - pts[i][1]), pts[i + 1][0] - pts[i][0]))
+                if ang > 90:
+                    ang -= 180
+                elif ang < -90:
+                    ang += 180
+                ax.text(mx, mz, name, fontsize=17 * s, rotation=ang, rotation_mode='anchor', ha='center', va='bottom',
+                        color='#111', path_effects=halo, zorder=5, clip_on=True)
+                break
+            acc += seg
+    for f in features.get('areas', []):
+        if f['kind'] == 'campground' and f.get('name'):
+            cx = sum(p[0] for p in f['pts']) / len(f['pts'])
+            cz = sum(p[1] for p in f['pts']) / len(f['pts'])
+            ax.text(cx, cz, f['name'], fontsize=19 * s, ha='center', va='center', color='#2f7a2f', fontweight='bold',
+                    path_effects=halo, zorder=5, clip_on=True)
+    for f in features.get('points', []):
+        if f['kind'] == 'peak':
+            ax.plot([f['x']], [f['z']], marker='^', color='#111', markersize=9 * s, zorder=5)
+        elif f['kind'] == 'viewpoint':
+            ax.plot([f['x']], [f['z']], marker='*', color='#111', markersize=12 * s, zorder=5)
+        if f.get('name'):
+            ax.text(f['x'] + 25, f['z'], f['name'], fontsize=16 * s, color='#111', va='center', path_effects=halo, zorder=5, clip_on=True)
+
+
+def render_map(path, heights_abs, site, layout, contour_interval, index_interval, relief, features=None):
     import matplotlib
 
     matplotlib.use("Agg")
@@ -238,6 +313,9 @@ def render_map(path, heights_abs, site, layout, contour_interval, index_interval
             t.set_color(brown)
             t.set_fontweight("bold")
 
+    if features:
+        draw_features(ax, fig, features, s, ppm, x0, y0, px, paper)
+
     # 1 km grid lines, labelled with the two principal digits.
     e_west, n_north = site["e_west"], site["n_north"]
     label_kw = dict(color=grid_blue, fontsize=44 * s, fontweight="bold")
@@ -297,6 +375,28 @@ def render_map(path, heights_abs, site, layout, contour_interval, index_interval
             fx(x0), fy(mtop + 200 * s), "SYNTHETIC TERRAIN - NOT A REAL PLACE",
             ha="left", va="top", fontsize=30 * s, color="#a01010", fontweight="bold",
         )
+    elif features:
+        fig.text(
+            fx(x0), fy(mtop + 200 * s), "Roads, trails, streams and campground (c) OpenStreetMap contributors (ODbL)",
+            ha="left", va="top", fontsize=22 * s, color=ink,
+        )
+        # Legend, between the scale bar and the declination diagram.
+        lx, ly = x0 + 1880 * s, mtop + 40 * s
+        lax = fig.add_axes([fx(lx), fy(ly + 330 * s), 120 * s / px, 330 * s / px])
+        lax.set_xlim(0, 1); lax.set_ylim(5.5, -0.5); lax.set_axis_off()
+        rows = [
+            ('Paved road', [('#111', 8), ('#d23a2a', 4.6)], '-'),
+            ('Road', [('#111', 6), ('#fbfaf4', 3)], '-'),
+            ('Track', [('#111', 2.6)], (0, (8, 3))),
+            ('Trail', [('#111', 2)], (0, (3.5, 2.5))),
+            ('Stream', [('#2f6fb5', 2.4)], '-'),
+        ]
+        for i, (label, strokes, style) in enumerate(rows):
+            for color, w in strokes:
+                lax.plot([0.05, 0.95], [i, i], color=color, linewidth=w * s, linestyle=style)
+            fig.text(fx(lx + 140 * s), fy(ly + (i + 0.5) * 60 * s), label, ha='left', va='center', fontsize=22 * s, color=ink)
+        lax.add_patch(plt.Rectangle((0.05, 4.75), 0.9, 0.5, facecolor='#cfe3b8', edgecolor='#2f7a2f', linewidth=2 * s, linestyle=(0, (6, 3))))
+        fig.text(fx(lx + 140 * s), fy(ly + 5.5 * 60 * s), 'Campground', ha='left', va='center', fontsize=22 * s, color=ink)
 
     # Scale bar: 0..1000 m, alternating 100 m blocks for the first 500 m.
     sb_left = x0
@@ -370,6 +470,21 @@ def render_map(path, heights_abs, site, layout, contour_interval, index_interval
 
     fig.savefig(path, dpi=dpi, facecolor=paper)
     plt.close(fig)
+
+
+def rerender_map(site_dir, relief=False):
+    """Redraw map.png from an existing site folder (used after adding features.json)."""
+    site_dir = Path(site_dir)
+    site = json.loads((site_dir / "site.json").read_text())
+    g = site["grid"]
+    q = np.fromfile(site_dir / "height.bin", dtype="<u2").astype(np.float64).reshape(g, g)
+    heights = site["elev_min"] + q * (site["elev_max"] - site["elev_min"]) / 65535
+    feats_path = site_dir / "features.json"
+    features = json.loads(feats_path.read_text()) if feats_path.exists() else None
+    render_map(
+        site_dir / "map.png", heights, site, site["map"], site["contour_interval_m"],
+        site.get("index_contour_interval_m", 50), relief, features,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +609,9 @@ def main(argv=None):
         site["default_start"] = {"name": a.start_name, "x": math.floor(sx / 10) * 10 + 5, "z": math.floor(sz / 10) * 10 + 5}
 
     print("Rendering map.png ...")
-    render_map(out / "map.png", play, site, layout, a.contour_interval, a.index_interval, a.relief)
+    feats_path = out / "features.json"
+    features = json.loads(feats_path.read_text()) if feats_path.exists() else None
+    render_map(out / "map.png", play, site, layout, a.contour_interval, a.index_interval, a.relief, features)
 
     (out / "site.json").write_text(json.dumps(site, indent=2) + "\n")
     (out / "courses").mkdir(exist_ok=True)

@@ -1,5 +1,6 @@
 // Movement, footfalls and slope effects (spec section 6). No Three.js, so it can be
-// unit tested. The caller supplies a ground object with slopeAt(x, z, dx, dz) and size.
+// unit tested. The caller supplies a ground object with slopeAt(x, z, dx, dz), size
+// and optionally collide(x, z) -> { x, z } to keep the walker out of obstacles.
 //
 // A pace is two steps. The user counts every time the left foot lands.
 
@@ -89,11 +90,17 @@ export class Locomotion {
 
     const d = speed * dt;
     const size = ground.size;
-    const nx = Math.min(size, Math.max(0, x + ux * d));
-    const nz = Math.min(size, Math.max(0, z + uz * d));
+    let nx = Math.min(size, Math.max(0, x + ux * d));
+    let nz = Math.min(size, Math.max(0, z + uz * d));
+    if (ground.collide) {
+      const c = ground.collide(nx, nz);
+      nx = Math.min(size, Math.max(0, c.x));
+      nz = Math.min(size, Math.max(0, c.z));
+    }
     const dx = nx - x;
     const dz = nz - z;
-    // Only distance actually covered counts, so pushing into the boundary is silent.
+    // Only distance actually covered counts, so pushing into the boundary or a
+    // tree is silent, and sliding along one counts only the slide.
     const feet = this.pace.advance(Math.hypot(dx, dz), (paceLength(s) / 2) * stride);
 
     this.lastGrade = grade;

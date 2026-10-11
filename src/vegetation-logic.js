@@ -58,9 +58,10 @@ export const SPECIES = Object.freeze(['oak', 'conifer', 'sapling']);
 // the cover there (times the preset's density). Returns
 // [{ x, z, species, scale, rot, tint }].
 // opts: { seed, density (0..1 preset multiplier), slopeAt(x,z), size (area metres),
-//         spacing (metres between candidates), exclude: [{x,z}], excludeR }
+//         spacing (metres between candidates), exclude: [{x,z}], excludeR,
+//         densityAt(x,z) (optional 0..1 multiplier: roads, campground) }
 export function tileTrees(tx, tz, opts) {
-  const { seed, density = 1, slopeAt, size, spacing = 6.5, exclude = [], excludeR = 4 } = opts;
+  const { seed, density = 1, slopeAt, size, spacing = 6.5, exclude = [], excludeR = 4, densityAt } = opts;
   const out = [];
   const n = Math.round(TILE_M / spacing);
   const step = TILE_M / n;
@@ -71,7 +72,8 @@ export function tileTrees(tx, tz, opts) {
       const z = tz * TILE_M + (j + 0.15 + 0.7 * unit(hashInts(h, 2))) * step;
       if (x < 0 || z < 0 || x > size || z > size) continue;
       const slope = slopeAt(x, z);
-      const p = forestCover(seed, x, z, slope) * density;
+      let p = forestCover(seed, x, z, slope) * density;
+      if (densityAt && p > 0) p *= densityAt(x, z);
       if (unit(hashInts(h, 3)) >= p) continue;
       if (exclude.some((e) => (e.x - x) ** 2 + (e.z - z) ** 2 < excludeR * excludeR)) continue;
       const r = unit(hashInts(h, 4));
@@ -92,7 +94,7 @@ export function tileTrees(tx, tz, opts) {
 // Ground clutter near the player: shrubs (more in clearings and at edges), fallen
 // logs (in the forest), rocks (on steep ground). Returns [{ x, z, kind, scale, rot, tint }].
 export function tileClutter(tx, tz, opts) {
-  const { seed, slopeAt, size, exclude = [], excludeR = 2.5 } = opts;
+  const { seed, slopeAt, size, exclude = [], excludeR = 2.5, densityAt } = opts;
   const out = [];
   const n = 8, step = TILE_M / n;
   for (let i = 0; i < n; i++) {
@@ -102,6 +104,8 @@ export function tileClutter(tx, tz, opts) {
       const z = tz * TILE_M + (j + unit(hashInts(h, 2))) * step;
       if (x < 0 || z < 0 || x > size || z > size) continue;
       if (exclude.some((e) => (e.x - x) ** 2 + (e.z - z) ** 2 < excludeR * excludeR)) continue;
+      // Nothing on roads and trails; less in the campground.
+      if (densityAt && unit(hashInts(h, 8)) >= densityAt(x, z)) continue;
       const slope = slopeAt(x, z);
       const cover = forestCover(seed, x, z, slope);
       const r = unit(hashInts(h, 3));

@@ -1,0 +1,57 @@
+{
+  "id": "matthews-arm-3",
+  "site": "shenandoah-matthews-arm",
+  "name": "Matthews Arm 3",
+  "seed": 3803,
+  "time_limit_min": 120,
+  "pass_threshold": 3,
+  "preset": "woods",
+  "start": {
+    "x": 921.2,
+    "z": 1100.8
+  },
+  "points": [
+    {
+      "code": "U4",
+      "x": 1515,
+      "z": 1165
+    },
+    {
+      "code": "T8",
+      "x": 1195,
+      "z": 1385
+    },
+    {
+      "code": "E8",
+      "x": 1355,
+      "z": 1675
+    },
+    {
+      "code": "Y3",
+      "x": 1585,
+      "z": 1745
+    }
+  ],
+  "decoys": [
+    {
+      "code": "V3",
+      "x": 1485,
+      "z": 1495
+    },
+    {
+      "code": "W8",
+      "x": 1105,
+      "z": 1635
+    },
+    {
+      "code": "J4",
+      "x": 1475,
+      "z": 1895
+    },
+    {
+      "code": "X4",
+      "x": 1625,
+      "z": 1015
+    }
+  ]
+}

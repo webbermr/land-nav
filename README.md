@@ -18,10 +18,10 @@ The AAR comes in M4.
 
 Two sites ship with the app. Pick between them in the Course panel.
 
-- **`shenandoah-matthews-arm`** (the default) is real terrain: a 2 km square centred on Matthews Arm Campground in Shenandoah National Park, built from USGS 3DEP 1 m lidar. It uses the 2020 Northern Shenandoah survey, with the 2014 Shenandoah survey filling a corner the 2020 one doesn't cover. Elevation runs from 527 to 1,052 m. Declination is 10.0° W for 2026-10-11 (World Magnetic Model 2025); with 1.7° of grid convergence, the G-M angle is 11.7° W. Courses start at the campground.
+- **`shenandoah-matthews-arm`** (the default) is real terrain: a 2 km square centred on Matthews Arm Campground in Shenandoah National Park, built from USGS 3DEP 1 m lidar. It uses the 2020 Northern Shenandoah survey, with the 2014 Shenandoah survey filling a corner the 2020 one doesn't cover. Elevation runs from 527 to 1,052 m. Declination is 10.0° W for 2026-10-11 (World Magnetic Model 2025); with 1.7° of grid convergence, the G-M angle is 11.7° W. Roads, trails, streams, the campground, parking and buildings come from OpenStreetMap and appear both on the map and in the world. All three courses start on the campground loop road and keep their stakes out in the woods.
 - **`demo-synthetic`** is procedural terrain for testing. It is not a real place, and its map says so.
 
-Shenandoah is a national park: follow park rules if you walk a course for real, and remember the app shows no trails, roads or water.
+Shenandoah is a national park: follow park rules if you walk a course for real. The roads and trails are as OpenStreetMap has them (data © OpenStreetMap contributors, ODbL), which may not match the ground today.
 
 ## Run it
 
@@ -81,6 +81,25 @@ Pass several `--dem` files if the area spans tiles or one survey has gaps; earli
 
 `--relief` adds light hillshade to the map. It's off by default because it makes terrain association too easy.
 
+### Roads, trails and buildings from OpenStreetMap
+
+Optional. Export the area (a little larger than the site) from any Overpass API mirror, with geometry:
+
+```
+[out:json];
+( way(S,W,N,E)[~"^(highway|tourism|amenity|leisure|waterway|building|natural|landuse)$"~"."];
+  node(S,W,N,E)[~"^(tourism|amenity|natural)$"~"."]; );
+out geom;
+```
+
+Then convert it and re-render the map:
+
+```sh
+python3 tools/make_features.py --site my-site --osm export.json
+```
+
+That writes `features.json`, sets `"features": true` in `site.json`, and redraws `map.png` with roads, trails, streams, the campground outline, buildings and a legend, plus the OSM credit in the margin. In the world, roads, tracks, trails and streams are laid on the ground, parking lots are paved, and buildings are simple boxes. Trees stay off roads and trails, out of parking lots and away from buildings, and thin out in campgrounds. Run it again after re-running `make_site.py`, which rewrites `site.json` and `map.png`.
+
 To test without downloading anything:
 
 ```sh
@@ -93,10 +112,10 @@ A course is `sites/<site>/courses/<id>.json` (format in spec section 8.2), liste
 
 ```sh
 node tools/make_course.mjs --site demo-synthetic --seed 1001 --id day-1 --name "Day course 1"
-# options: --points N --decoys N --time MIN --pass N --preset woods|open
+# options: --points N --decoys N --time MIN --pass N --preset woods|open --start x,z
 ```
 
-The generator follows spec 8.3. Legs are 200 to 600 m. Points sit at least 100 m from the boundary, on slopes under 30%. Every stake, the start included, is at least 150 m from every other. Stakes go at the centre of their 10 m grid square, so the 8-digit grid on the card is within about 7 m of the stake. Shenandoah has `matthews-arm-1` (woods) and `matthews-arm-2` (open); the demo site has `day-1` (woods) and `day-2` (open, 90 minutes). On a site with a default start, generated courses start there. "New random course" in the Course panel generates one in the browser from a seed.
+The generator follows spec 8.3. Legs are 200 to 600 m. Points sit at least 100 m from the boundary, on slopes under 30%. Every stake, the start included, is at least 150 m from every other. Stakes go at the centre of their 10 m grid square, so the 8-digit grid on the card is within about 7 m of the stake. On a site with OpenStreetMap features, stakes stay at least 30 m from roads, tracks, parking, buildings and the campground: a stake you can find by walking a road isn't a navigation problem. Trails and streams are allowed nearby, since they're fair handrails. Shenandoah has `matthews-arm-1` (woods), `matthews-arm-2` (open) and `matthews-arm-3` (woods), all starting on the campground loop road; the demo site has `day-1` (woods) and `day-2` (open, 90 minutes). On a site with a default start, generated courses start there. "New random course" in the Course panel generates one in the browser from a seed.
 
 ## Tests
 
@@ -135,11 +154,15 @@ tools/make_course.mjs generate a course file from a seed
 src/ui.js             Enter VR button, settings panel
 src/vegetation-logic.js tree cover and placement (pure, tested)
 src/vegetation.js     instanced trees, cut-outs, shrubs, logs, rocks
+src/features-logic.js OSM features: tree clearing, stake avoidance (pure, tested)
+src/features.js       roads, trails, streams, parking, buildings in the world
+src/collision.js      walker vs trunks, logs, rocks, buildings (pure, tested)
 src/sky.js            gradient sky dome
 src/settings.js       every tunable number, persisted when storage allows
 src/main.js           renderer, player rig, desktop and VR loops
-sites/<id>/           site.json, height.bin, skirt.bin, map.png, courses/
+sites/<id>/           site.json, height.bin, skirt.bin, map.png, features.json, courses/
 tools/make_site.py    DEM GeoTIFF -> site folder
+tools/make_features.py OpenStreetMap export -> features.json and map symbols
 vendor/three/         three.js r186, unmodified
 ```
 
@@ -153,7 +176,8 @@ vendor/three/         three.js r186, unmodified
 - **Paper strip:** distance is measured with a ruler at map scale (0 to 1000 m, 10 m ticks), laid along the last line you drew with its zero on the line's first dot. That's the scale edge of a GTA protractor, rather than a blank strip you tick and carry to the scale bar. It gives the same information in one step fewer.
 - **Course end:** the spec says a course ends "when the user returns to start and ends it". Here you can end anywhere, but the run only passes if you ended within 10 m of the start, inside the time limit, with enough right codes.
 - **Score card rows:** a punch fills the highlighted row, then the highlight moves on to the next blank. Pick a different row first (Up/Down, or Y in VR) if you navigate the points out of order.
-- **Trees and ground (pulled forward from M5):** instanced trees around you: tall hardwoods with a touch of early-autumn colour, hemlock-like conifers in patches, and saplings, at about 200 per hectare. The cover is mostly forest with clearings, and thinner on very steep ground. Full 3D trees are drawn near you and flat cut-outs farther out. Shrubs, fallen logs and rocks (on steep ground) cover the ground near you. Placement is seeded per site, so the forest is the same every visit, and trees are kept off stakes and the start. The ground is leaf litter under trees and grass in clearings, blending to canopy green in the distance. **Woods** is full forest with 150 m visibility; **open** is open woodland with light haze. Settings → Trees (high, medium, low, off) trades distance for frame rate; medium is the default, sized for the Quest 3, but not yet measured on one. Trunks don't block you yet (collision is in M5).
+- **Trees and ground (pulled forward from M5):** instanced trees around you: tall hardwoods with a touch of early-autumn colour, hemlock-like conifers in patches, and saplings, at about 200 per hectare. The cover is mostly forest with clearings, and thinner on very steep ground. Full 3D trees are drawn near you and flat cut-outs farther out. Shrubs, fallen logs and rocks (on steep ground) cover the ground near you. Placement is seeded per site, so the forest is the same every visit, and trees are kept off stakes and the start. The ground is leaf litter under trees and grass in clearings, blending to canopy green in the distance. **Woods** is full forest with 150 m visibility; **open** is open woodland with light haze. Settings → Trees (high, medium, low, off) trades distance for frame rate; medium is the default, sized for the Quest 3, but not yet measured on one.
+- **Collision (pulled forward from M5):** tree trunks, fallen logs, rocks and buildings block you, and you slide along them; shrubs don't. Only the distance you actually cover counts toward footfalls, so walking into a tree adds no paces. In VR, physically stepping into a trunk pushes you back out. Trees only block you when they're drawn, so Trees → Off also turns their collision off. Settings → "Trees and buildings block you" switches it all off.
 - **Lost lifeline (a deliberate exception to "never show position"):** press **K** on desktop, or hold the **left stick press** for a second in VR. A red arrow shows your true position and facing on the map for 15 seconds, then goes away. The desktop map opens on its own; in VR, hold the left grip to see it. Each use during a course is counted, logged with your position for the AAR, and shown on the score card and the result. It doesn't fail the run. Turn it off in Settings ("Allow 'show my position'") to practise without it.
 - **The compass rides the right controller's pointing ray,** not its grip, so the sighting axis is wherever you point. Where the compass and map sit in your hands (`compassOffset*`, `mapOffset*`, `mapTiltDeg` in `settings.js`) is a first guess that needs tuning on the headset.
 - **Map line weights** were thickened (minor contours 2.4 px, index 5 px at 4096) so they survive minification in the headset. Regenerate other sites to pick this up.

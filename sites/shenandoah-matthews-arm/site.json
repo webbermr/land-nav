@@ -44,8 +44,9 @@
     "shen2014.tif"
   ],
   "default_start": {
-    "name": "Matthews Arm Campground",
-    "x": 995,
-    "z": 1005
-  }
+    "name": "Matthews Arm Campground loop road",
+    "x": 921.2,
+    "z": 1100.8
+  },
+  "features": true
 }

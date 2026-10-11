@@ -21,6 +21,9 @@ import { createBeadsModel, createScoreCard } from './wrist.js';
 import { Vegetation, VEGETATION_QUALITY } from './vegetation.js';
 import { forestCover, hashString } from './vegetation-logic.js';
 import { createSky, SKY } from './sky.js';
+import { loadFeatures, buildFeatures } from './features.js';
+import { FeatureIndex, stakeAvoider } from './features-logic.js';
+import { resolveCollisions } from './collision.js';
 
 const params = new URLSearchParams(location.search);
 // The site comes from ?site=, else the first entry in sites/index.json (see start()).
@@ -103,6 +106,7 @@ let terrain = null;
 let tools = null;
 let beacon = null;
 let siteData = null;   // { site, field, ... } from loadSite
+let featureIndex = null; // roads, buildings etc. from features.json, if the site has one
 let run = null;        // the current CourseRun, if a course is loaded
 const wrist = { beads: createBeadsModel(), card: createScoreCard(), cardShown: false };
 const coursePanel = document.getElementById('course');
@@ -278,6 +282,24 @@ const head = new THREE.Vector3();
 const lastHeading = new THREE.Vector3(0, 0, -1);
 let snapArmed = true;
 
+// Keep the walker out of trunks, logs, rocks and buildings (slide along them).
+const OBSTACLE_REACH_M = 4; // longest log half-length plus a margin
+function collide(x, z) {
+  if (!settings.collisions) return { x, z };
+  const obstacles = vegetation ? vegetation.obstaclesNear(x, z, OBSTACLE_REACH_M) : [];
+  if (featureIndex) {
+    for (const b of featureIndex.buildingsNear(x, z, OBSTACLE_REACH_M)) obstacles.push({ type: 'poly', pts: b.pts });
+  }
+  return resolveCollisions(x, z, settings.collisionRadius, obstacles);
+}
+
+// What Locomotion walks on.
+const ground = {
+  slopeAt: (x, z, dx, dz) => terrain.slopeAt(x, z, dx, dz),
+  get size() { return terrain.size; },
+  collide,
+};
+
 function playFeet(feet, haptics) {
   for (const foot of feet) footfalls.play(foot, haptics);
 }
@@ -306,7 +328,7 @@ function updateDesktop(dt) {
     return;
   }
 
-  const step = loco.step(dt, terrain, player.position.x, player.position.z, dirX, dirZ, 1);
+  const step = loco.step(dt, ground, player.position.x, player.position.z, dirX, dirZ, 1);
   player.position.x += step.dx;
   player.position.z += step.dz;
   player.position.y = terrain.heightAt(player.position.x, player.position.z);
@@ -330,17 +352,19 @@ function updateXR(dt) {
   const rx = -fwd.z, rz = fwd.x;
   const dirX = fwd.x * stick.y + rx * stick.x;
   const dirZ = fwd.z * stick.y + rz * stick.x;
-  const step = loco.step(dt, terrain, head.x, head.z, dirX, dirZ, stick.mag);
+  const step = loco.step(dt, ground, head.x, head.z, dirX, dirZ, stick.mag);
   player.position.x += step.dx;
   player.position.z += step.dz;
   head.x += step.dx;
   head.z += step.dz;
   playFeet(step.feet, (hand, strength, ms) => xrInput.pulse(hand, strength, ms));
 
-  // Physical walking in the room can carry the head past the edge; push the rig back.
+  // Physical walking in the room can carry the head into a tree or past the edge;
+  // push the rig back.
   const s = terrain.size;
-  const cx = THREE.MathUtils.clamp(head.x, 0, s);
-  const cz = THREE.MathUtils.clamp(head.z, 0, s);
+  const pushed = collide(head.x, head.z);
+  const cx = THREE.MathUtils.clamp(pushed.x, 0, s);
+  const cz = THREE.MathUtils.clamp(pushed.z, 0, s);
   player.position.x += cx - head.x;
   player.position.z += cz - head.z;
   head.x = cx;
@@ -565,7 +589,9 @@ function updateXRCourseControls() {
 // Generated courses start at the site's default start (a trailhead) when it has one.
 function genOptions() {
   const s = siteData?.site.default_start;
-  return s ? { start: { x: s.x, z: s.z } } : {};
+  const o = s ? { start: { x: s.x, z: s.z } } : {};
+  if (featureIndex) o.avoid = stakeAvoider(featureIndex);
+  return o;
 }
 
 // ---- Course panel (page UI) ----
@@ -729,7 +755,8 @@ function updateHud(dt) {
     lines.push(`walked ${loco.pace.distance.toFixed(1)} m  paces ${loco.pace.leftCount}  grade ${(loco.lastGrade * 100).toFixed(0)}%`);
     if (vegetation) {
       const v = vegetation.stats;
-      lines.push(`trees ${v.near} near, ${v.cut} far, ${v.clutter} ground  cover ${vegetation.coverAt(player.position.x, player.position.z).toFixed(2)}`);
+      const surface = featureIndex?.surfaceAt(player.position.x, player.position.z);
+      lines.push(`trees ${v.near} near, ${v.cut} far, ${v.clutter} ground  cover ${vegetation.coverAt(player.position.x, player.position.z).toFixed(2)}${surface ? `  on ${surface}` : ''}`);
     }
     const c = compassDebug();
     if (c) lines.push(c);
@@ -834,11 +861,18 @@ async function start() {
   setStatus(`Loading site "${siteId}" ...`);
   const base = `sites/${encodeURIComponent(siteId)}`;
   const [data, mapTexture] = await Promise.all([loadSite(base), loadMapTexture(base)]);
+  const features = await loadFeatures(base, data.site);
   const vegSeed = hashString(data.site.id);
-  terrain = buildTerrain(renderer, data, { coverAt: (x, z, slope) => forestCover(vegSeed, x, z, slope) });
-  vegetation = new Vegetation(scene, terrain, data.site, settings);
+  featureIndex = features ? new FeatureIndex(features) : null;
+  // No trees on roads, trails, parking or around buildings; fewer in the campground.
+  const densityAt = featureIndex ? (x, z) => featureIndex.density(x, z) : undefined;
+  terrain = buildTerrain(renderer, data, {
+    coverAt: (x, z, slope) => forestCover(vegSeed, x, z, slope) * (densityAt ? densityAt(x, z) : 1),
+  });
+  vegetation = new Vegetation(scene, terrain, data.site, settings, { densityAt });
   applyCanopyRange();
   scene.add(terrain.group);
+  scene.add(buildFeatures(features, data.field));
   tools = new Tools({ renderer, camera, site: data.site, mapTexture, settings });
   for (const hand of ['left', 'right']) if (hands[hand].grip) tools.attach(hand, hands[hand]);
   siteData = data;
@@ -882,7 +916,7 @@ async function start() {
 
   // Exposed for automated checks and console poking. Not a gameplay API.
   window.__landnav = {
-    camera, player, terrain, site: data.site, field: data.field, renderer, scene, settings, loco, input, tools, beacon, wrist, startCourse, vegetation,
+    camera, player, terrain, site: data.site, field: data.field, renderer, scene, settings, loco, input, tools, beacon, wrist, startCourse, vegetation, featureIndex, collide,
     get run() { return run; },
   };
 

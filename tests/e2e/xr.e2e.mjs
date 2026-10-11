@@ -35,6 +35,9 @@ const BEACON = { x: 1150, z: 880 };
 await page.goto(`${base}?site=demo-synthetic&debug&beacon=${BEACON.x},${BEACON.z}`, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__landnav?.tools, null, { timeout: 60000 });
 await page.evaluate(() => { document.getElementById('help').hidden = true; });
+// Walking checks measure exact distances, so trees mustn't get in the way. The
+// collision checks switch it back on.
+await page.evaluate(() => { window.__landnav.settings.collisions = false; });
 
 // In-page helpers for aiming controllers and finding points on the map board.
 await page.evaluate(async () => {
@@ -85,6 +88,13 @@ await page.evaluate(async () => {
       return c;
     },
     // Put the player (desktop) or the head (VR) at a scene position.
+    // A tree trunk near (x, z) with nothing else within 5 m of it, to walk into.
+    clearTrunk(x, z) {
+      const obs = L().vegetation.obstaclesNear(x, z, 40);
+      const mid = (p) => (p.type === 'capsule' ? { x: (p.ax + p.bx) / 2, z: (p.az + p.bz) / 2 } : p);
+      return obs.find((o) => o.type === 'circle' && o.r > 0.2 && obs.every((p) => p === o
+        || Math.hypot(mid(p).x - o.x, mid(p).z - o.z) > (p.type === 'capsule' ? 8.5 : 5)));
+    },
     goTo(x, z) {
       const { player, camera, renderer, terrain } = L();
       if (renderer.xr.isPresenting) {
@@ -339,6 +349,44 @@ await check('Trees: drawn around you, never on a stake, and the quality setting 
   });
   assert.deepEqual(off, { near: 0, cut: 0, clutter: 0 });
   await page.evaluate(() => { const l = window.__landnav; l.settings.preset = 'open'; l.vegetation.setPreset('open'); l.run.end(l.run.course.start); });
+});
+
+await check('Collision: a trunk stops you, only distance walked counts, and it can be switched off', async () => {
+  const { tree, p } = await page.evaluate(() => {
+    const l = window.__landnav;
+    l.settings.preset = 'woods'; l.vegetation.setPreset('woods');
+    const p = { x: l.player.position.x, z: l.player.position.z };
+    const tree = window.__t.clearTrunk(p.x, p.z);
+    if (tree) {
+      window.__t.goTo(tree.x, tree.z + 3);
+      l.input.yaw = 0; l.input.pitch = 0; // facing grid north (-z), straight at it
+      l.loco.pace.reset();
+      l.settings.collisions = true;
+    }
+    return { tree, p };
+  });
+  assert.ok(tree, 'found a trunk to walk into');
+  try {
+    const stop = tree.z + tree.r + 0.25;
+    await page.keyboard.down('KeyW');
+    await page.waitForFunction((stop) => window.__landnav.player.position.z < stop + 0.01, stop, { timeout: 30000, polling: 50 });
+    await page.waitForTimeout(800); // keep pushing into it
+    await page.keyboard.up('KeyW');
+    const r = await page.evaluate(() => ({ z: window.__landnav.player.position.z, d: window.__landnav.loco.pace.distance }));
+    assert.ok(Math.abs(r.z - stop) < 0.02, `stopped at ${r.z}, trunk face ${stop}`);
+    assert.ok(r.d < 3 - tree.r - 0.25 + 0.02, `paced ${r.d} m`);
+    // Off: straight through.
+    await page.evaluate(() => { window.__landnav.settings.collisions = false; });
+    await page.keyboard.down('KeyW');
+    await page.waitForFunction((z) => window.__landnav.player.position.z < z - 1, tree.z, { timeout: 30000, polling: 50 });
+  } finally {
+    await page.keyboard.up('KeyW');
+    await page.evaluate((p) => {
+      const l = window.__landnav;
+      l.settings.collisions = false; l.settings.preset = 'open'; l.vegetation.setPreset('open');
+      window.__t.goTo(p.x, p.z);
+    }, p);
+  }
 });
 
 await check('Enter VR button is offered', async () => {
@@ -639,6 +687,36 @@ await check('physical walking cannot leave the playable area', async () => {
   });
   assert.ok(r > -0.01, `head x ${r}`);
   await page.evaluate(() => { window.__xr.head.x = 0; });
+});
+
+await check('physical walking into a trunk pushes you back out', async () => {
+  const tree = await page.evaluate(() => {
+    const l = window.__landnav;
+    l.settings.preset = 'woods'; l.vegetation.setPreset('woods');
+    window.__xr.head.x = 0;
+    l.player.rotation.y = 0;
+    const h = l.camera.getWorldPosition(l.camera.position.clone());
+    const tree = window.__t.clearTrunk(h.x, h.z);
+    if (tree) window.__t.goTo(tree.x + 2, tree.z);
+    return tree;
+  });
+  assert.ok(tree, 'found a trunk');
+  try {
+    await frames(2);
+    await page.evaluate(() => { window.__landnav.settings.collisions = true; window.__xr.head.x = -2; }); // step 2 m west, into it
+    await frames(3);
+    const d = await page.evaluate((t) => {
+      const h = window.__landnav.camera.getWorldPosition(window.__landnav.camera.position.clone());
+      return Math.hypot(h.x - t.x, h.z - t.z);
+    }, tree);
+    assert.ok(d > tree.r + 0.24, `head ${d} m from the trunk centre`);
+  } finally {
+    await page.evaluate(() => {
+      const l = window.__landnav;
+      l.settings.collisions = false; l.settings.preset = 'open'; l.vegetation.setPreset('open');
+      window.__xr.head.x = 0;
+    });
+  }
 });
 
 if (shots) {

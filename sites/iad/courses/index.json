@@ -1,0 +1,17 @@
+[
+  {
+    "id": "iad-1",
+    "name": "IAD 1",
+    "file": "iad-1.json"
+  },
+  {
+    "id": "iad-2",
+    "name": "IAD 2",
+    "file": "iad-2.json"
+  },
+  {
+    "id": "iad-night-1",
+    "name": "IAD Night 1",
+    "file": "iad-night-1.json"
+  }
+]

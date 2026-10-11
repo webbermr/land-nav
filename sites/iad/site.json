@@ -1,0 +1,69 @@
+{
+  "id": "iad",
+  "name": "IAD",
+  "utm_zone": "18N",
+  "epsg": 32618,
+  "mgrs_gzd": "18S",
+  "mgrs_100km": "TJ",
+  "center_lat": 38.941393,
+  "center_lon": -77.465286,
+  "e_west": 285340,
+  "n_north": 4314160,
+  "size_m": 2000.0,
+  "spacing_m": 4,
+  "grid": 501,
+  "elev_min": 79.01083374023438,
+  "elev_max": 90.97840881347656,
+  "elev_ref": 79.01083374023438,
+  "skirt": {
+    "size_m": 6000,
+    "spacing_m": 30,
+    "grid": 201,
+    "e_west": 283350,
+    "n_north": 4316160,
+    "elev_min": -10.274688720703125,
+    "elev_max": 114.46875762939453
+  },
+  "declination_deg": -10.47,
+  "convergence_deg": -1.5502,
+  "gm_angle_deg": -8.9198,
+  "declination_date": "2026-10-11",
+  "contour_interval_m": 10,
+  "index_contour_interval_m": 50,
+  "map": {
+    "px": 4096,
+    "area": [
+      323,
+      110,
+      3773,
+      3560
+    ]
+  },
+  "sources": [
+    "USGS 3DEP elevation service",
+    "lidar: VA_NorthernVA_B22",
+    "lidar: MD VA Sandy NCR 2014",
+    "lidar: VA Fairfax County 2018"
+  ],
+  "default_start": {
+    "name": "IAD - Rwy",
+    "x": 1715,
+    "z": 1855
+  },
+  "features": true,
+  "landcover": {
+    "grid": 201,
+    "spacing_m": 10,
+    "year": 2021,
+    "source": "NLCD 2021 Land Cover and Tree Canopy Cover (USGS, MRLC, USDA Forest Service)",
+    "summary": {
+      "forest": 0.061,
+      "shrub": 0.005,
+      "grass/field": 0.006,
+      "developed": 0.921,
+      "water": 0.0,
+      "wetland": 0.006
+    },
+    "mean_canopy": 0.064
+  }
+}

@@ -1,5 +1,6 @@
 [
   { "id": "shenandoah-matthews-arm", "name": "Shenandoah NP: Matthews Arm" },
   { "id": "demo-synthetic", "name": "Synthetic demo (not a real place)" },
-  { "id": "home", "name": "Home" }
+  { "id": "home", "name": "Home" },
+  { "id": "blue-knob", "name": "Blue Knob" }
 ]

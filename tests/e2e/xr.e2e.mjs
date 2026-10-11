@@ -73,10 +73,34 @@ await page.evaluate(async () => {
       return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height };
     },
     angleDiff(a, b) { const d = ((b - a) % 360 + 540) % 360 - 180; return Math.abs(d); },
+    async course(spec) {
+      const { generateCourse } = await import('./src/course-logic.js');
+      const l = L();
+      const c = typeof spec === 'string'
+        ? await (await fetch(`sites/demo-synthetic/courses/${spec}.json`)).json()
+        : generateCourse(l.site, l.field, spec.seed, spec.opts);
+      await l.startCourse(c);
+      return c;
+    },
+    // Put the player (desktop) or the head (VR) at a scene position.
+    goTo(x, z) {
+      const { player, camera, renderer, terrain } = L();
+      if (renderer.xr.isPresenting) {
+        const h = camera.getWorldPosition(new THREE.Vector3());
+        player.position.x += x - h.x;
+        player.position.z += z - h.z;
+      } else {
+        player.position.set(x, terrain.heightAt(x, z), z);
+      }
+    },
+
   };
 });
 
 const check = (name, fn) => fn().then(() => console.log(`ok   ${name}`), (e) => { console.log(`FAIL ${name}\n     ${e.message}`); process.exitCode = 1; });
+// The HUD is redrawn each frame, so wait for a message rather than reading it at once.
+const hudSays = (re) => page.waitForFunction((src) => new RegExp(src).test(document.getElementById('hud').textContent), re.source, { timeout: 15000, polling: 50 })
+  .catch(async () => assert.fail(`HUD never said ${re}: ${await page.textContent('#hud')}`));
 const frames = (n) => page.evaluate((n) => new Promise((res) => {
   // Wait n XR frames (the XR loop runs off the session's rAF).
   let k = 0; const s = window.__xr.session || window;
@@ -172,13 +196,85 @@ await check('M2 desktop: map dots, line, protractor, erase and zoom', async () =
   await page.waitForTimeout(300);
   await click({ x: 1500, z: 1500 });
   assert.equal(await page.evaluate(() => window.__landnav.tools.map.dots.length), 2, 'dot placed with the compass out');
-  assert.match(await page.textContent('#hud'), /Dot placed/);
+  await hudSays(/Dot placed/);
   await page.keyboard.press('KeyC');
   } finally {
     if (await page.evaluate(() => window.__landnav.tools.desktopCompass)) await page.keyboard.press('KeyC');
     if (await page.evaluate(() => window.__landnav.tools.desktopMap)) await page.keyboard.press('KeyM');
     await page.evaluate(() => window.__landnav.tools.map.clear());
   }
+});
+
+await check('M3 desktop: course at the start; punch, beads, card, rows; end and score', async () => {
+  const c = await page.evaluate(() => window.__t.course('day-1'));
+  let st = await page.evaluate(() => {
+    const { run, player, wrist } = window.__landnav;
+    return { state: run.state, x: player.position.x, z: player.position.z, card: wrist.card.mesh.visible, beads: wrist.beads.group.visible, grids: run.grids };
+  });
+  assert.equal(st.state, 'ready');
+  assert.deepEqual([st.x, st.z], [c.start.x, c.start.z]);
+  assert.ok(st.card && st.beads, 'card and beads shown');
+  const { eightDigitGrid } = await import('../../src/coords.js');
+  const site = await page.evaluate(() => window.__landnav.site);
+  assert.equal(st.grids.points[0], eightDigitGrid(site, c.points[0].x, c.points[0].z));
+  // The clock starts on the first step.
+  await page.keyboard.down('KeyW');
+  await page.waitForFunction(() => window.__landnav.run.state === 'running', null, { timeout: 30000, polling: 50 });
+  await page.keyboard.up('KeyW');
+  // Flying is off during a course.
+  await page.keyboard.press('KeyV');
+  await hudSays(/Flying is off/);
+  const punchAt = async (p, dx = 0.8) => {
+    await page.evaluate(([x, z]) => window.__t.goTo(x, z), [p.x + dx, p.z]);
+    await page.keyboard.press('KeyE');
+  };
+  await punchAt(c.points[0]);
+  await punchAt(c.decoys[0]);
+  await punchAt(c.points[2]);
+  st = await page.evaluate(() => ({ entries: window.__landnav.run.entries, row: window.__landnav.run.row }));
+  assert.deepEqual(st.entries, [c.points[0].code, c.decoys[0].code, c.points[2].code, null]);
+  assert.equal(st.row, 3);
+  await punchAt({ x: c.points[1].x + 40, z: c.points[1].z });
+  await hudSays(/No stake within 2 m/);
+  await page.keyboard.press('ArrowUp');
+  assert.equal(await page.evaluate(() => window.__landnav.run.row), 2);
+  // Beads: 12 slides = 1 km + 200 m; Shift+Space resets.
+  for (let i = 0; i < 12; i++) await page.keyboard.press('Space');
+  assert.deepEqual(await page.evaluate(() => [window.__landnav.run.beads.upper, window.__landnav.run.beads.lower]), [1, 2]);
+  await page.keyboard.down('ShiftLeft'); await page.keyboard.press('Space'); await page.keyboard.up('ShiftLeft');
+  assert.equal(await page.evaluate(() => window.__landnav.run.beads.metres), 0);
+  // Tab hides and shows the card.
+  await page.keyboard.press('Tab');
+  assert.equal(await page.evaluate(() => window.__landnav.wrist.card.mesh.visible), false);
+  await page.keyboard.press('Tab');
+  // Back at the start, Enter twice ends it: 2 of 4 right, threshold 3, so a fail.
+  await page.evaluate(([x, z]) => window.__t.goTo(x + 3, z), [c.start.x, c.start.z]);
+  await page.keyboard.press('Enter');
+  assert.equal(await page.evaluate(() => window.__landnav.run.state), 'running', 'one Enter only asks');
+  await page.keyboard.press('Enter');
+  const r = await page.evaluate(() => window.__landnav.run.result);
+  assert.equal(r.correct, 2);
+  assert.equal(r.total, 4);
+  assert.ok(r.endedAtStart && r.timeOk && !r.pass);
+  assert.deepEqual(r.rows.map((x) => x.correct), [true, false, true, false]);
+  await page.keyboard.press('KeyE');
+  await hudSays(/course is over/);
+});
+
+await check('M3 desktop: the clock runs out; a generated course from a seed', async () => {
+  const c = await page.evaluate(async () => {
+    const c = await window.__t.course({ seed: 4242 });
+    window.__landnav.run.course.time_limit_min = 0.005; // 0.3 s
+    return c;
+  });
+  assert.equal(c.id, 'gen-4242');
+  await page.keyboard.down('KeyW');
+  await page.waitForFunction(() => window.__landnav.run.state === 'ended', null, { timeout: 30000, polling: 50 });
+  await page.keyboard.up('KeyW');
+  const r = await page.evaluate(() => window.__landnav.run.result);
+  assert.equal(r.reason, 'time');
+  assert.ok(!r.pass);
+  await hudSays(/Time is up/);
 });
 
 await check('Enter VR button is offered', async () => {
@@ -379,6 +475,76 @@ await check('M2 VR: map in the left hand; pencil dots, line, protractor, long-pr
   await page.evaluate(() => { window.__xr.buttons.left[1] = false; window.__xr.pose = { left: {}, right: {} }; });
   await frames(2);
   assert.equal(await page.evaluate(() => window.__landnav.tools.map.group.visible), false);
+});
+
+await check('M3 VR: course on the wrist; X card, A beads (hold resets), trigger punches, hold Y ends', async () => {
+  const c = await page.evaluate(() => window.__t.course({ seed: 99 }));
+  await frames(3);
+  let st = await page.evaluate(() => {
+    const { camera, run, wrist } = window.__landnav;
+    const h = camera.getWorldPosition(camera.position.clone());
+    return { hx: h.x, hz: h.z, sx: run.course.start.x, sz: run.course.start.z, cardParent: wrist.card.mesh.parent?.userData.handedness, card: wrist.card.mesh.visible };
+  });
+  assert.ok(Math.hypot(st.hx - st.sx, st.hz - st.sz) < 0.05, 'head over the start');
+  assert.equal(st.cardParent, 'left');
+  assert.ok(st.card);
+  const press = async (hand, b, n = 1) => {
+    await page.evaluate(([h, i]) => { window.__xr.buttons[h][i] = true; }, [hand, b]); await frames(n);
+    await page.evaluate(([h, i]) => { window.__xr.buttons[h][i] = false; }, [hand, b]); await frames(2);
+  };
+  await press('left', 4); // X hides the card
+  assert.equal(await page.evaluate(() => window.__landnav.wrist.card.mesh.visible), false);
+  await press('left', 4);
+  await press('right', 4); await press('right', 4);
+  assert.equal(await page.evaluate(() => window.__landnav.run.beads.metres), 200);
+  await page.evaluate(() => { window.__xr.buttons.right[4] = true; });
+  await page.waitForFunction(() => window.__landnav.run.beads.metres === 0, null, { timeout: 30000, polling: 50 });
+  await page.evaluate(() => { window.__xr.buttons.right[4] = false; }); await frames(2);
+  // Walk the head to point 1 and punch with the trigger.
+  await page.evaluate(([x, z]) => window.__t.goTo(x, z), [c.points[0].x + 1, c.points[0].z]);
+  await frames(2);
+  await press('right', 0);
+  assert.deepEqual(await page.evaluate(() => window.__landnav.run.entries), [c.points[0].code, null, null, null]);
+  // Y taps move the row; holding Y ends the course.
+  await press('left', 5);
+  assert.equal(await page.evaluate(() => window.__landnav.run.row), 2);
+  await page.evaluate(([x, z]) => window.__t.goTo(x, z), [c.start.x, c.start.z + 2]);
+  await frames(2);
+  await page.evaluate(() => { window.__xr.buttons.left[5] = true; });
+  await page.waitForFunction(() => window.__landnav.run.state === 'ended', null, { timeout: 30000, polling: 50 });
+  await page.evaluate(() => { window.__xr.buttons.left[5] = false; }); await frames(2);
+  const r = await page.evaluate(() => window.__landnav.run.result);
+  assert.equal(r.correct, 1);
+  assert.ok(r.endedAtStart);
+  assert.ok(await page.evaluate(() => window.__xr.pulses.some((p) => p.hand === 'right' && p.ms === 80)), 'punch haptic');
+});
+
+await check('M3 VR: ruler along a drawn line (right stick press)', async () => {
+  await page.evaluate(() => { window.__landnav.tools.map.clear(); window.__xr.buttons.left[1] = true; });
+  await frames(3);
+  const A = { x: 700, z: 1300 }, B = { x: 1100, z: 900 };
+  const aimTap = async (pt, b = 0) => {
+    await page.evaluate(({ x, z }) => {
+      const { w, n } = window.__t.onBoard(x, z);
+      window.__t.aim('right', 'ray', [w[0] + n[0] * 0.15, w[1] + n[1] * 0.15, w[2] + n[2] * 0.15], w);
+    }, pt);
+    await frames(2);
+    await page.evaluate((i) => { window.__xr.buttons.right[i] = true; }, b); await frames(1);
+    await page.evaluate((i) => { window.__xr.buttons.right[i] = false; }, b); await frames(2);
+  };
+  await aimTap(A); await aimTap(B); await aimTap(A); await aimTap(B);
+  await aimTap(B, 3);
+  const r = await page.evaluate(() => {
+    const m = window.__landnav.tools.map;
+    const a = m.boardOf(m.dots[0]);
+    return { v: m.ruler.visible, p: m.ruler.position.toArray(), a, rot: m.ruler.rotation.z };
+  });
+  assert.ok(r.v, 'ruler shown');
+  assert.ok(Math.hypot(r.p[0] - r.a.bx, r.p[1] - r.a.by) < 1e-9, 'zero on the first dot');
+  // A to B runs north-east on the board: +x and +y, 45 degrees.
+  assert.ok(Math.abs(r.rot - Math.PI / 4) < 1e-3, `angle ${r.rot}`);
+  await page.evaluate(() => { window.__landnav.tools.map.clear(); window.__xr.buttons.left[1] = false; window.__xr.pose = { left: {}, right: {} }; });
+  await frames(2);
 });
 
 await check('physical walking cannot leave the playable area', async () => {

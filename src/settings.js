@@ -53,7 +53,7 @@ export const DEFAULTS = Object.freeze({
   flyFastMultiplier: 5,
 });
 
-function storage() {
+export function storage() {
   try {
     const s = globalThis.localStorage;
     if (!s) return null;

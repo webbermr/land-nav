@@ -1,0 +1,57 @@
+{
+  "id": "day-1",
+  "site": "demo-synthetic",
+  "name": "Day course 1",
+  "seed": 1001,
+  "time_limit_min": 120,
+  "pass_threshold": 3,
+  "preset": "woods",
+  "start": {
+    "x": 355,
+    "z": 585
+  },
+  "points": [
+    {
+      "code": "A9",
+      "x": 565,
+      "z": 325
+    },
+    {
+      "code": "J6",
+      "x": 255,
+      "z": 765
+    },
+    {
+      "code": "Y6",
+      "x": 105,
+      "z": 1115
+    },
+    {
+      "code": "Z2",
+      "x": 575,
+      "z": 1195
+    }
+  ],
+  "decoys": [
+    {
+      "code": "N4",
+      "x": 185,
+      "z": 935
+    },
+    {
+      "code": "M4",
+      "x": 575,
+      "z": 1405
+    },
+    {
+      "code": "Y3",
+      "x": 185,
+      "z": 1245
+    },
+    {
+      "code": "X4",
+      "x": 465,
+      "z": 845
+    }
+  ]
+}

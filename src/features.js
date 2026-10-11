@@ -2,13 +2,14 @@
 // parking lots, and simple buildings. Data from sites/<id>/features.json
 // (OpenStreetMap, via tools/make_features.py). Sites without it get nothing.
 import * as THREE from 'three';
+import { dataUrl } from './data-url.js';
 
 // Only sites whose site.json says "features": true have the file, so others don't
 // make a request that 404s.
 export async function loadFeatures(baseUrl, site) {
   if (!site?.features) return null;
   try {
-    const res = await fetch(`${baseUrl}/features.json`);
+    const res = await fetch(dataUrl(`${baseUrl}/features.json`));
     return res.ok ? await res.json() : null;
   } catch {
     return null;

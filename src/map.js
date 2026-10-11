@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { BOARD_SIZE_M, boardScale, boardToScene, insideTerrain, sceneToBoard, sceneToMapPx } from './map-math.js';
 import { gridAzimuth, gridToMagnetic, degToMils, horizontalDistance } from './coords.js';
+import { dataUrl } from './data-url.js';
 
 const OVERLAY_PX = 2048;
 const DOT_PICK_M = 0.01;       // board metres: how close counts as "on a dot"
@@ -383,5 +384,5 @@ export class MapBoard {
 }
 
 export function loadMapTexture(baseUrl) {
-  return new THREE.TextureLoader().loadAsync(`${baseUrl}/map.png`);
+  return new THREE.TextureLoader().loadAsync(dataUrl(`${baseUrl}/map.png`));
 }

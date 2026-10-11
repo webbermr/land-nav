@@ -6,13 +6,14 @@ import { BeadCounter } from './beads.js';
 import { RunLog } from './runlog.js';
 import { eightDigitGrid } from './coords.js';
 import { storage } from './settings.js';
+import { dataUrl } from './data-url.js';
 
 export const PUNCH_RANGE_M = 2;
 const HISTORY_KEY = 'landnav.history.v1';
 
 export async function loadCourseIndex(base) {
   try {
-    const res = await fetch(`${base}/courses/index.json`);
+    const res = await fetch(dataUrl(`${base}/courses/index.json`));
     return res.ok ? await res.json() : [];
   } catch {
     return [];
@@ -20,7 +21,7 @@ export async function loadCourseIndex(base) {
 }
 
 export async function loadCourse(base, file) {
-  const res = await fetch(`${base}/courses/${file}`);
+  const res = await fetch(dataUrl(`${base}/courses/${file}`));
   if (!res.ok) throw new Error(`Could not load course ${file} (${res.status})`);
   return res.json();
 }

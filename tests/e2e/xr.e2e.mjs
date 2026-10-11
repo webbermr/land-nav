@@ -39,7 +39,9 @@ await page.evaluate(() => { document.getElementById('help').hidden = true; });
 // In-page helpers for aiming controllers and finding points on the map board.
 await page.evaluate(async () => {
   const THREE = await import('three');
-  const { gridAzimuth, gridToMagnetic } = await import('./src/coords.js');
+  // App modules live next to main.js (src/ locally, v/<commit>/src/ on Pages).
+  const src = (f) => new URL(f, document.querySelector('script[type=module][src]').src).href;
+  const { gridAzimuth, gridToMagnetic } = await import(src('coords.js'));
   const L = () => window.__landnav;
   window.__t = {
     // Point a controller space (hand 'left'|'right', kind 'ray'|'grip') from eye toward target, world coords.
@@ -74,7 +76,7 @@ await page.evaluate(async () => {
     },
     angleDiff(a, b) { const d = ((b - a) % 360 + 540) % 360 - 180; return Math.abs(d); },
     async course(spec) {
-      const { generateCourse } = await import('./src/course-logic.js');
+      const { generateCourse } = await import(src('course-logic.js'));
       const l = L();
       const c = typeof spec === 'string'
         ? await (await fetch(`sites/demo-synthetic/courses/${spec}.json`)).json()

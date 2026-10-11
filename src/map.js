@@ -6,20 +6,21 @@ import { BOARD_SIZE_M, boardToScene, insideTerrain, sceneToBoard, sceneToMapPx }
 import { gridAzimuth, gridToMagnetic, degToMils, horizontalDistance } from './coords.js';
 
 const OVERLAY_PX = 2048;
-const DOT_PICK_M = 0.006;      // board metres: how close counts as "on a dot"
+const DOT_PICK_M = 0.01;       // board metres: how close counts as "on a dot"
 const PROTRACTOR_R = 0.065;    // board metres
-const PENCIL = '#2b2b2b';
+const PENCIL = '#161616';
 
 function drawProtractor(size = 1024) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
   const g = c.getContext('2d');
   const cx = size / 2, cy = size / 2, r = size / 2 - 2;
-  g.fillStyle = 'rgba(255,255,255,0.18)';
+  g.fillStyle = 'rgba(255,255,255,0.55)';
   g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.fill();
-  g.strokeStyle = 'rgba(20,20,20,0.9)';
-  g.lineWidth = 2;
+  g.strokeStyle = '#000';
+  g.lineWidth = 4;
   g.beginPath(); g.arc(cx, cy, r, 0, Math.PI * 2); g.stroke();
+  g.lineWidth = 2;
   g.beginPath(); g.arc(cx, cy, r * 0.72, 0, Math.PI * 2); g.stroke();
   const ray = (deg, r0, r1, w, color) => {
     const a = (deg * Math.PI) / 180;
@@ -42,17 +43,17 @@ function drawProtractor(size = 1024) {
   for (let m = 0; m < 6400; m += 20) {
     const d = (m * 360) / 6400;
     const long = m % 100 === 0;
-    ray(d, r * (long ? 0.9 : 0.95), r, long ? 2 : 1, '#111');
+    ray(d, r * (long ? 0.9 : 0.95), r, long ? 3 : 1.6, '#000');
   }
-  for (let m = 0; m < 6400; m += 200) text((m * 360) / 6400, r * 0.84, String(m / 100), 'bold 22px system-ui, sans-serif', '#111');
+  for (let m = 0; m < 6400; m += 200) text((m * 360) / 6400, r * 0.84, String(m / 100), 'bold 28px system-ui, sans-serif', '#000');
   // Inner band: degrees, ticks every 1, labels every 10.
   for (let d = 0; d < 360; d++) {
     const len = d % 10 === 0 ? 0.08 : d % 5 === 0 ? 0.055 : 0.03;
-    ray(d, r * (0.72 - len), r * 0.72, d % 10 === 0 ? 2.2 : 1.2, '#a01818');
+    ray(d, r * (0.72 - len), r * 0.72, d % 10 === 0 ? 3.2 : 1.8, '#b00000');
   }
-  for (let d = 0; d < 360; d += 10) text(d, r * 0.57, String(d), 'bold 24px system-ui, sans-serif', '#a01818');
+  for (let d = 0; d < 360; d += 10) text(d, r * 0.57, String(d), 'bold 30px system-ui, sans-serif', '#b00000');
   // Crosshair, with grid north marked.
-  g.strokeStyle = 'rgba(20,20,20,0.75)'; g.lineWidth = 1.5;
+  g.strokeStyle = '#000'; g.lineWidth = 2.5;
   g.beginPath(); g.moveTo(cx - r * 0.45, cy); g.lineTo(cx + r * 0.45, cy); g.moveTo(cx, cy - r * 0.45); g.lineTo(cx, cy + r * 0.45); g.stroke();
   text(0, r * 0.4, 'GN', 'bold 26px system-ui, sans-serif', '#111');
   const tex = new THREE.CanvasTexture(c);
@@ -115,7 +116,7 @@ export class MapBoard {
     group.add(this.protractor);
 
     this.cursor = new THREE.Mesh(
-      new THREE.RingGeometry(0.0018, 0.003, 20),
+      new THREE.RingGeometry(0.0028, 0.0045, 24),
       new THREE.MeshBasicMaterial({ color: 0xd02020, depthWrite: false, transparent: true }),
     );
     this.cursor.position.z = 0.0012;
@@ -229,7 +230,7 @@ export class MapBoard {
     };
     const byId = new Map(this.dots.map((d) => [d.id, d]));
     g.strokeStyle = PENCIL;
-    g.lineWidth = 2.2;
+    g.lineWidth = 4.5;
     g.lineCap = 'round';
     for (const l of this.lines) {
       const a = byId.get(l.a), b = byId.get(l.b);
@@ -240,12 +241,12 @@ export class MapBoard {
     for (const d of this.dots) {
       const [x, y] = at(d);
       g.fillStyle = PENCIL;
-      g.beginPath(); g.arc(x, y, 6, 0, Math.PI * 2); g.fill();
-      g.strokeStyle = PENCIL; g.lineWidth = 2;
-      g.beginPath(); g.arc(x, y, 13, 0, Math.PI * 2); g.stroke();
+      g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2); g.fill();
+      g.strokeStyle = PENCIL; g.lineWidth = 3.5;
+      g.beginPath(); g.arc(x, y, 19, 0, Math.PI * 2); g.stroke();
       if (d.id === this.selected) {
-        g.strokeStyle = '#1f5fd0'; g.lineWidth = 4;
-        g.beginPath(); g.arc(x, y, 22, 0, Math.PI * 2); g.stroke();
+        g.strokeStyle = '#1f5fd0'; g.lineWidth = 7;
+        g.beginPath(); g.arc(x, y, 30, 0, Math.PI * 2); g.stroke();
       }
     }
     if (this.settings.assisted && this.lastLine) {

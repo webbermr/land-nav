@@ -27,6 +27,7 @@ import { FeatureIndex, stakeAvoider } from './features-logic.js';
 import { resolveCollisions } from './collision.js';
 import { analyzeRun, buildRunExport } from './aar-logic.js';
 import { drawReview, createReviewBoard, downloadRun } from './aar.js';
+import { createVrMenu, cycle } from './vr-menu.js';
 import { NIGHT_SKY, RED_LIGHT, NO_LIGHT, tintUnlit, createHeadlamp, HEADLAMP_INTENSITY } from './night.js';
 import { dataUrl } from './data-url.js';
 
@@ -187,15 +188,7 @@ for (let i = 0; i < 2; i++) {
 
 input.on('toggleFly', () => {
   if (renderer.xr.isPresenting) return;
-  if (run && run.state !== 'ended' && !fly) {
-    showToast('Flying is off while a course is running.');
-    return;
-  }
-  fly = !fly;
-  // Keep the eye where it was: the camera offset moves between rig and camera.
-  if (fly) player.position.y += settings.eyeHeight;
-  placeDesktopCamera();
-  if (!fly && terrain) snapPlayerToGround();
+  setFly(!fly);
 });
 input.on('togglePreset', () => {
   settings.preset = settings.preset === 'woods' ? 'open' : 'woods';
@@ -304,10 +297,11 @@ function togglePanel() {
     if (document.pointerLockElement) document.exitPointerLock();
   }
 }
-buildSettingsPanel(panel, settings, (key) => {
+function onSettingChange(key) {
   if (key === 'paceCountPer100m' || key === 'jogPaceCountPer100m') loco.pace.reset();
   if (key === 'vegetation') applyCanopyRange();
-});
+}
+buildSettingsPanel(panel, settings, onSettingChange);
 
 function placeDesktopCamera() {
   camera.position.set(0, fly ? 0 : settings.eyeHeight, 0);
@@ -333,6 +327,81 @@ const fwd = new THREE.Vector3();
 const head = new THREE.Vector3();
 const lastHeading = new THREE.Vector3(0, 0, -1);
 let snapArmed = true;
+
+// ---- In-headset menu (hold X) ----
+
+const courseRunning = () => run && run.state !== 'ended';
+const onOff = (v) => (v ? 'On' : 'Off');
+function changeSetting(key, value) {
+  settings[key] = value;
+  saveSettings(settings);
+  onSettingChange(key);
+  buildSettingsPanel(panel, settings, onSettingChange); // keep the page panel in step
+}
+function setFly(on) {
+  if (on && courseRunning()) return showToast('Flying is off while a course is running.');
+  fly = on;
+  // Desktop: keep the eye where it was; the camera offset moves between rig and camera.
+  if (!renderer.xr.isPresenting) {
+    if (fly) player.position.y += settings.eyeHeight;
+    placeDesktopCamera();
+  }
+  if (!fly && terrain) snapPlayerToGround();
+}
+const step = (key, lo, hi) => (dir) => changeSetting(key, Math.min(hi, Math.max(lo, settings[key] + dir)));
+const MENU_ITEMS = [
+  { label: 'Woods or open', value: () => (settings.preset === 'woods' ? 'Woods' : 'Open'),
+    press: () => { settings.preset = settings.preset === 'woods' ? 'open' : 'woods'; applyPreset(); saveSettings(settings); } },
+  { label: 'Day or night', value: () => (settings.night ? 'Night' : 'Day'), enabled: () => !courseRunning(),
+    press: () => setNight(!settings.night) },
+  { label: 'Headlamp', value: () => onOff(headlampOn), enabled: () => settings.night, press: () => toggleHeadlamp() },
+  { label: 'Fly', value: () => onOff(fly), enabled: () => !courseRunning(), press: () => setFly(!fly) },
+  { label: 'Trees', value: () => settings.vegetation[0].toUpperCase() + settings.vegetation.slice(1),
+    press: (d) => changeSetting('vegetation', cycle(['off', 'low', 'medium', 'high'], settings.vegetation, d)) },
+  { label: 'Trees and buildings block you', value: () => onOff(settings.collisions), press: () => changeSetting('collisions', !settings.collisions) },
+  { label: 'Pace count per 100 m', value: () => String(settings.paceCountPer100m), repeat: true, press: step('paceCountPer100m', 30, 120) },
+  { label: 'Jogging pace count', value: () => String(settings.jogPaceCountPer100m), repeat: true, press: step('jogPaceCountPer100m', 25, 100) },
+  { label: 'Time compression', value: () => `${settings.timeScale}x`, press: (d) => changeSetting('timeScale', cycle([1, 2, 3], settings.timeScale, d)) },
+  { label: 'Comfort vignette', value: () => `${Math.round(settings.vignette * 100)}%`,
+    press: (d) => changeSetting('vignette', cycle([0, 0.25, 0.5, 0.75, 1], settings.vignette, d)) },
+  { label: 'Snap turn', value: () => onOff(settings.snapTurn), press: () => changeSetting('snapTurn', !settings.snapTurn) },
+  { label: 'Compass lens', value: () => (settings.units === 'mils' ? 'Mils' : 'Degrees'),
+    press: () => changeSetting('units', settings.units === 'mils' ? 'deg' : 'mils') },
+  { label: 'Assisted map readout', value: () => onOff(settings.assisted), press: () => changeSetting('assisted', !settings.assisted) },
+  { label: "Allow 'show my position'", value: () => onOff(settings.lostHelp), press: () => changeSetting('lostHelp', !settings.lostHelp) },
+  { label: 'Close', press: () => vrMenu.hide() },
+];
+const vrMenu = createVrMenu(MENU_ITEMS, {
+  title: 'Menu',
+  hint: 'Point with the right controller, pull the trigger. Left or right side of a value steps it down or up. Hold X to close.',
+});
+scene.add(vrMenu.mesh);
+// The right controller's pointer while the menu is open.
+const menuPointer = new THREE.Line(
+  new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]),
+  new THREE.LineBasicMaterial({ color: 0xffd27a }),
+);
+menuPointer.visible = false;
+
+function toggleVrMenu() {
+  if (vrMenu.open) { vrMenu.hide(); return; }
+  camera.getWorldPosition(head);
+  camera.getWorldDirection(fwd);
+  fwd.y = 0;
+  if (fwd.lengthSq() < 1e-4) fwd.copy(lastHeading);
+  vrMenu.show(head, fwd.normalize());
+  // Ride along with the rig, so walking or flying keeps it in front of you.
+  player.attach(vrMenu.mesh);
+}
+
+function updateVrMenu() {
+  const ray = hands.right.ray;
+  if (!ray) return;
+  if (menuPointer.parent !== ray) ray.add(menuPointer);
+  const dist = vrMenu.update(ray, xrInput.isDown('right', 'trigger'), performance.now() / 1000);
+  menuPointer.visible = vrMenu.open;
+  menuPointer.scale.z = dist ?? 1.5;
+}
 
 // Keep the walker out of trunks, logs, rocks and buildings (slide along them).
 const OBSTACLE_REACH_M = 4; // longest log half-length plus a margin
@@ -405,6 +474,27 @@ function updateXR(dt) {
   const rx = -fwd.z, rz = fwd.x;
   const dirX = fwd.x * stick.y + rx * stick.x;
   const dirZ = fwd.z * stick.y + rz * stick.x;
+  updateVrMenu();
+
+  // Flying (from the menu): left stick moves, right stick up and down climbs and
+  // descends. No footfalls, no collisions; never below the ground.
+  if (fly) {
+    const speed = settings.vrFlySpeed * dt;
+    player.position.x += dirX * speed;
+    player.position.z += dirZ * speed;
+    const climb = tools?.compass.group.visible ? 0 : xrInput.stick('right').y;
+    player.position.y += climb * speed;
+    camera.getWorldPosition(head);
+    const floor = terrain.heightAt(head.x, head.z);
+    if (player.position.y < floor) player.position.y = floor;
+    if (tools) tools.updateXR(dt, xrInput);
+    updateXRCourseControls();
+    courseTick(dt, head.x, head.z, false);
+    const moving = Math.min(1, Math.hypot(stick.x, stick.y) + Math.abs(climb));
+    vignette.update(settings.vignette * moving, dt);
+    boundaryWarning = '';
+    return;
+  }
   // Jog (left stick press) lasts until you've let go of the stick for a moment.
   if (stick.mag > 0) xrStillSec = 0;
   else if ((xrStillSec += dt) > 1) xrJog = false;
@@ -467,7 +557,7 @@ function punchMessage(r) {
 
 const HINTS = {
   desktop: 'E punch a stake within 2 m. Space bead, Shift+Space reset. Up/Down pick the row. Tab hides this. Enter twice to end (be back at the start).',
-  vr: 'Trigger punches a stake within 2 m. A slides a bead, hold A to reset. Y picks the next row; hold Y to end (be back at the start). X hides this.',
+  vr: 'Trigger punches a stake within 2 m. A slides a bead, hold A to reset. Y picks the next row; hold Y to end (be back at the start). X hides this; hold X for the menu.',
 };
 
 function setCardShown(shown) {
@@ -684,7 +774,11 @@ function holdButton(hand, button, holdSec, { onTap, onHold }) {
 }
 
 function updateXRCourseControls() {
-  if (xrInput.justPressed('left', 'primary')) setCardShown(!wrist.cardShown);
+  // X: tap for the score card, hold for the menu.
+  holdButton('left', 'primary', 0.8, {
+    onTap: () => setCardShown(!wrist.cardShown),
+    onHold: () => { toggleVrMenu(); xrInput.pulse('left', 0.4, 30); },
+  });
   holdButton('left', 'stick', 1, {
     onTap: () => { xrJog = !xrJog; xrStillSec = 0; xrInput.pulse('left', xrJog ? 0.4 : 0.15, 20); },
     onHold: () => { showMyPosition(); xrInput.pulse('left', 0.6, 60); },
@@ -706,7 +800,7 @@ function updateXRCourseControls() {
     onHold: () => { finishCourse('ended'); xrInput.pulse('left', 0.9, 120); },
   });
   // The trigger punches when the map isn't up (with the map up it's the pencil).
-  if (xrInput.justPressed('right', 'trigger') && !tools?.map.group.visible) {
+  if (xrInput.justPressed('right', 'trigger') && !tools?.map.group.visible && !vrMenu.open) {
     const r = run.punch(pos);
     if (r.kind === 'punch') xrInput.pulse('right', 1, 80);
     else xrInput.pulse('right', 0.2, 20);
@@ -850,6 +944,9 @@ async function enterVR() {
 }
 
 function exitVR() {
+  vrMenu.hide();
+  menuPointer.visible = false;
+  fly = false; // VR fly height doesn't carry over to the desktop camera
   // Carry the head's position and heading back into desktop mode.
   camera.getWorldPosition(head);
   camera.getWorldDirection(fwd);
@@ -1087,6 +1184,8 @@ async function start() {
     get run() { return run; },
     get lastRun() { return lastRun; },
     get xrJog() { return xrJog; },
+    get fly() { return fly; },
+    vrMenu, setFly,
     headlamp, setNight, toggleHeadlamp, get headlampOn() { return headlampOn; },
     showReview, hideReview, reviewBoard,
   };

@@ -62,6 +62,7 @@ export const DEFAULTS = Object.freeze({
   mouseSensitivity: 0.0022,   // rad per pixel
   flySpeed: 40,               // m/s
   flyFastMultiplier: 5,
+  vrFlySpeed: 12,             // m/s, VR fly (from the in-headset menu)
 });
 
 export function storage() {

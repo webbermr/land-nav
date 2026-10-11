@@ -13,5 +13,10 @@
     "id": "matthews-arm-3",
     "name": "Matthews Arm 3",
     "file": "matthews-arm-3.json"
+  },
+  {
+    "id": "matthews-arm-night-1",
+    "name": "Matthews Arm Night 1",
+    "file": "matthews-arm-night-1.json"
   }
 ]

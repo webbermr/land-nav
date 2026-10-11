@@ -1,0 +1,58 @@
+{
+  "id": "matthews-arm-night-1",
+  "site": "shenandoah-matthews-arm",
+  "name": "Matthews Arm Night 1",
+  "seed": 3901,
+  "time_limit_min": 150,
+  "pass_threshold": 3,
+  "preset": "woods",
+  "start": {
+    "x": 921.2,
+    "z": 1100.8
+  },
+  "points": [
+    {
+      "code": "Y8",
+      "x": 935,
+      "z": 1425
+    },
+    {
+      "code": "S9",
+      "x": 955,
+      "z": 1645
+    },
+    {
+      "code": "T3",
+      "x": 1065,
+      "z": 1525
+    },
+    {
+      "code": "M8",
+      "x": 1315,
+      "z": 1465
+    }
+  ],
+  "decoys": [
+    {
+      "code": "M1",
+      "x": 1235,
+      "z": 1255
+    },
+    {
+      "code": "W9",
+      "x": 1485,
+      "z": 1555
+    },
+    {
+      "code": "H4",
+      "x": 725,
+      "z": 1675
+    },
+    {
+      "code": "Q4",
+      "x": 1205,
+      "z": 1615
+    }
+  ],
+  "night": true
+}

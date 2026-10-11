@@ -24,6 +24,16 @@ A pass needs at least the course's pass threshold of right codes, inside the tim
 
 Below that come the result, total time, distance against ideal, how long the map and compass were out, and your pace count as it worked out on this terrain. **Download run (JSON)** saves everything: the course, the 1 s track, events, tool times, bead presses, result and settings. The last run is kept in browser storage, so **Course → Review last run** brings it back after a reload.
 
+**M5 (realism): night mode built, awaiting a headset check; walk-in-place not started.** Slope effects, the woods and open presets, trees and collision were already in. At night:
+
+- The sky is dark and tree silhouettes fade out by about 60 m.
+- A red headlamp lights the ground a few metres ahead. Switch it with **T** on desktop or the **left trigger** in VR.
+- The map, score card, compass dial and lens can only be read under the headlamp, and then in red. As in the field, red map symbols wash out under red light.
+- With the headlamp off, only the compass's luminous marks show: the north arrow, the E and W dots, the index dot and the bezel line.
+- Stakes appear only within 10 m.
+
+Run any course at night with **Run it at night** in the Course panel. `matthews-arm-night-1` is a night course with shorter legs (150 to 350 m) and 150 minutes. **N** switches day and night when no course is running. A night run is still reviewed in daylight colours.
+
 Legs are split by the stakes you actually reached, not by which score-card row you wrote in. A leg ends when you punch its point's stake. If you never did, it ends at your closest approach to that point before you punched a later one. A code in the wrong row still counts against you on the card, and the review says what you wrote.
 
 Two sites ship with the app. Pick between them in the Course panel.
@@ -123,6 +133,7 @@ A course is `sites/<site>/courses/<id>.json` (format in spec section 8.2), liste
 ```sh
 node tools/make_course.mjs --site demo-synthetic --seed 1001 --id day-1 --name "Day course 1"
 # options: --points N --decoys N --time MIN --pass N --preset woods|open --start x,z
+#          --night --leg-min M --leg-max M
 ```
 
 The generator follows spec 8.3. Legs are 200 to 600 m. Points sit at least 100 m from the boundary, on slopes under 30%. Every stake, the start included, is at least 150 m from every other. Stakes go at the centre of their 10 m grid square, so the 8-digit grid on the card is within about 7 m of the stake. On a site with OpenStreetMap features, stakes stay at least 30 m from roads, tracks, parking, buildings and the campground: a stake you can find by walking a road isn't a navigation problem. Trails and streams are allowed nearby, since they're fair handrails. Shenandoah has `matthews-arm-1` (woods), `matthews-arm-2` (open) and `matthews-arm-3` (woods), all starting on the campground loop road; the demo site has `day-1` (woods) and `day-2` (open, 90 minutes). On a site with a default start, generated courses start there. "New random course" in the Course panel generates one in the browser from a seed.
@@ -170,6 +181,7 @@ src/features-logic.js OSM features: tree clearing, stake avoidance (pure, tested
 src/features.js       roads, trails, streams, parking, buildings in the world
 src/collision.js      walker vs trunks, logs, rocks, buildings (pure, tested)
 src/sky.js            gradient sky dome
+src/night.js          night sky, red headlamp, red-light tint for what you read
 src/settings.js       every tunable number, persisted when storage allows
 src/main.js           renderer, player rig, desktop and VR loops
 sites/<id>/           site.json, height.bin, skirt.bin, map.png, features.json, courses/

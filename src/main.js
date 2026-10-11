@@ -26,6 +26,7 @@ import { FeatureIndex, stakeAvoider } from './features-logic.js';
 import { resolveCollisions } from './collision.js';
 import { analyzeRun, buildRunExport } from './aar-logic.js';
 import { drawReview, createReviewBoard, downloadRun } from './aar.js';
+import { NIGHT_SKY, RED_LIGHT, NO_LIGHT, tintUnlit, createHeadlamp, HEADLAMP_INTENSITY } from './night.js';
 import { dataUrl } from './data-url.js';
 
 const params = new URLSearchParams(location.search);
@@ -70,23 +71,58 @@ player.add(camera);
 scene.add(player);
 
 // Sky light plus warm bounce from the ground, so tree undersides and trunks aren't black.
-scene.add(new THREE.HemisphereLight(0xdfe9f3, 0x6b6250, 0.95));
+const hemi = new THREE.HemisphereLight(0xdfe9f3, 0x6b6250, 0.95);
+scene.add(hemi);
 // Low-ish sun from the south-west so slopes read clearly. No shadows in v1.
 const sun = new THREE.DirectionalLight(0xfff1dc, 2.2);
 sun.position.set(-0.55, 0.55, 0.62).multiplyScalar(1000);
 scene.add(sun);
 
 let vegetation = null;
+const headlamp = createHeadlamp(camera);
+let headlampOn = true;
 
 // Woods: you see about 150 m. Open: light haze, so distant ridges fade like real air.
+// Night: starlight under the canopy, tree silhouettes to about 60 m, and a headlamp.
 function applyPreset() {
-  scene.fog = settings.preset === 'woods'
-    ? new THREE.Fog(SKY.horizon, settings.woodsVisibility * 0.15, settings.woodsVisibility)
-    : new THREE.Fog(SKY.horizon, 1500, 7000);
+  const night = settings.night;
+  const horizon = night ? NIGHT_SKY.horizon : SKY.horizon;
+  if (night) scene.fog = new THREE.Fog(horizon, 2, settings.nightVisibility);
+  else if (settings.preset === 'woods') scene.fog = new THREE.Fog(horizon, settings.woodsVisibility * 0.15, settings.woodsVisibility);
+  else scene.fog = new THREE.Fog(horizon, 1500, 7000);
+  scene.background = horizon;
+  const u = sky.material.uniforms;
+  u.top.value = night ? NIGHT_SKY.top : SKY.top;
+  u.horizon.value = horizon;
+  u.ground.value = night ? NIGHT_SKY.ground : SKY.ground;
+  hemi.intensity = night ? 0.05 : 0.95;
+  hemi.color.setHex(night ? 0x8a9cc8 : 0xdfe9f3);
+  sun.intensity = night ? 0 : 2.2;
+  headlamp.intensity = night && headlampOn ? HEADLAMP_INTENSITY : 0;
+  tools?.compass.setNight(night);
+  applyNightTint();
   if (vegetation) {
     vegetation.setPreset(settings.preset);
+    vegetation.setNight(night);
     applyCanopyRange();
   }
+}
+
+// What you read by (src/night.js): red under the headlamp, near black without it.
+function applyNightTint() {
+  const tint = settings.night ? (headlampOn ? RED_LIGHT : NO_LIGHT) : null;
+  for (const root of [tools?.compass.group, tools?.map.group, wrist.card.mesh, run?.group]) tintUnlit(root, tint);
+}
+
+function setNight(on) {
+  settings.night = on;
+  applyPreset();
+}
+
+function toggleHeadlamp() {
+  headlampOn = !headlampOn;
+  applyPreset();
+  if (settings.night) showToast(headlampOn ? 'Headlamp on.' : 'Headlamp off: only luminous marks show.');
 }
 
 // The ground reads as canopy where drawn trees stop.
@@ -95,8 +131,6 @@ function applyCanopyRange() {
   const q = VEGETATION_QUALITY[settings.vegetation] ?? VEGETATION_QUALITY.medium;
   terrain.setCanopyRange(q.far * 0.6, q.far * 1.05);
 }
-applyPreset();
-
 const input = new DesktopInput(renderer.domElement, settings);
 const xrInput = new XRInput(renderer, settings);
 const loco = new Locomotion(settings);
@@ -116,6 +150,7 @@ const reviewBoard = createReviewBoard();
 scene.add(reviewBoard.mesh);
 let run = null;        // the current CourseRun, if a course is loaded
 const wrist = { beads: createBeadsModel(), card: createScoreCard(), cardShown: false };
+applyPreset();
 const coursePanel = document.getElementById('course');
 let boundaryWarning = '';
 
@@ -244,6 +279,11 @@ addEventListener('keydown', (e) => {
   }
   if (e.code === 'Enter' && run && run.state !== 'ended') requestEndCourse();
   if (e.code === 'KeyK') showMyPosition();
+  if (e.code === 'KeyT') toggleHeadlamp();
+  if (e.code === 'KeyN') {
+    if (run && run.state !== 'ended') showToast('Day or night is set when the course starts (Course panel).');
+    else { setNight(!settings.night); showToast(settings.night ? 'Night. T switches the headlamp.' : 'Day.'); }
+  }
   if (e.code === 'KeyL' && tools?.desktopMap) showToast(RULER_MESSAGES[tools.map.toggleRuler()]);
   if ((e.code === 'Delete' || e.code === 'Backspace') && tools?.desktopMap) {
     showToast(tools.desktopErase() ? 'Dot erased.' : 'Point at a dot, then press Delete to erase it.');
@@ -452,15 +492,17 @@ function mountWrist() {
   wrist.beads.group.visible = !!run;
 }
 
-async function startCourse(course) {
+async function startCourse(course, options = {}) {
   run?.dispose();
   hideReview();
   vegetation?.setExclusions([course.start, ...course.points, ...course.decoys]);
   run = new CourseRun({ scene, terrain, site: siteData.site, course, settings });
   const problems = validateCourse(course, siteData.site, siteData.field);
   if (problems.length) console.warn(`Course ${course.id} breaks the generator's rules:\n  ${problems.join('\n  ')}`);
-  // The course sets the woods/open preset for this run (not saved as a setting).
+  // The course sets the woods/open preset and day or night for this run (not saved).
   settings.preset = course.preset || settings.preset;
+  settings.night = !!(course.night || options.night);
+  headlampOn = true;
   applyPreset();
   tools?.map.clear();
   loco.pace.reset();
@@ -636,6 +678,7 @@ function holdButton(hand, button, holdSec, { onTap, onHold }) {
 function updateXRCourseControls() {
   if (xrInput.justPressed('left', 'primary')) setCardShown(!wrist.cardShown);
   holdButton('left', 'stick', 1, { onHold: () => { showMyPosition(); xrInput.pulse('left', 0.6, 60); } });
+  if (xrInput.justPressed('left', 'trigger') && settings.night) { toggleHeadlamp(); xrInput.pulse('left', 0.2, 15); }
   // B shows or hides the review table (with the map up, B is the protractor).
   if (xrInput.justPressed('right', 'secondary') && !tools?.map.group.visible && lastRun) {
     if (reviewBoard.mesh.visible) reviewBoard.mesh.visible = false;
@@ -715,6 +758,13 @@ function buildCoursePanel(index, sites = []) {
   const syncSeed = () => { seedRow.hidden = select.value !== 'gen'; };
   select.addEventListener('change', syncSeed);
   syncSeed();
+  const nightRow = document.createElement('label');
+  nightRow.className = 'row';
+  const nightLabel = document.createElement('span');
+  nightLabel.textContent = 'Run it at night';
+  const nightBox = document.createElement('input');
+  nightBox.type = 'checkbox';
+  nightRow.append(nightLabel, nightBox);
   const startBtn = document.createElement('button');
   startBtn.type = 'button';
   startBtn.textContent = 'Start course';
@@ -724,7 +774,7 @@ function buildCoursePanel(index, sites = []) {
       const course = v === 'gen'
         ? generateCourse(siteData.site, siteData.field, Number(seed.value) || 1, genOptions())
         : await loadCourse(`sites/${encodeURIComponent(siteId)}`, v.slice(5));
-      await startCourse(course);
+      await startCourse(course, { night: nightBox.checked });
     } catch (err) {
       console.error(err);
       showToast(`Could not start: ${err.message}`);
@@ -741,7 +791,7 @@ function buildCoursePanel(index, sites = []) {
   const note = document.createElement('p');
   note.className = 'note';
   note.textContent = (siteData.site.default_start ? `The START flag is at ${siteData.site.default_start.name}. ` : '') + 'You start at the START flag. Plot the points from the score card, navigate to each, punch its stake, then come back to the start and end the course.';
-  coursePanel.append(h, select, seedRow, startBtn, endBtn, reviewBtn, note);
+  coursePanel.append(h, select, seedRow, nightRow, startBtn, endBtn, reviewBtn, note);
 }
 
 document.getElementById('course-button').addEventListener('click', () => {
@@ -823,7 +873,7 @@ function updateHud(dt) {
   const info = renderer.info.render;
   const mode = fly ? 'FLY' : 'WALK';
   const lines = [
-    `${mode}  ${settings.preset}  ${fps.toFixed(0)} fps  ${info.calls} calls  ${(info.triangles / 1000).toFixed(0)}k tris`,
+    `${mode}  ${settings.preset}${settings.night ? `  NIGHT (headlamp ${headlampOn ? 'on' : 'off'})` : ''}  ${fps.toFixed(0)} fps  ${info.calls} calls  ${(info.triangles / 1000).toFixed(0)}k tris`,
   ];
   // Never show the true position or the pace count during a run. Debug only.
   if (debug) {
@@ -955,6 +1005,7 @@ async function start() {
   scene.add(buildFeatures(features, data.field));
   tools = new Tools({ renderer, camera, site: data.site, mapTexture, settings });
   for (const hand of ['left', 'right']) if (hands[hand].grip) tools.attach(hand, hands[hand]);
+  applyPreset(); // night tint and compass lume for the tools just made
   siteData = data;
   buildCoursePanel(await loadCourseIndex(base), sites);
   mountWrist();
@@ -999,16 +1050,19 @@ async function start() {
     camera, player, terrain, site: data.site, field: data.field, renderer, scene, settings, loco, input, tools, beacon, wrist, startCourse, vegetation, featureIndex, collide,
     get run() { return run; },
     get lastRun() { return lastRun; },
+    headlamp, setNight, toggleHeadlamp, get headlampOn() { return headlampOn; },
     showReview, hideReview, reviewBoard,
   };
 
-  // ?course=<id> loads a listed course; ?course=gen:<seed> generates one.
+  // ?course=<id> loads a listed course; ?course=gen:<seed> generates one; add &night
+  // to run it at night.
   const want = params.get('course');
   if (want) {
     const index = await loadCourseIndex(base);
     const listed = index.find((c) => c.id === want);
-    if (listed) await startCourse(await loadCourse(base, listed.file));
-    else if (want.startsWith('gen:')) await startCourse(generateCourse(data.site, data.field, Number(want.slice(4)) || 1, genOptions()));
+    const opts = { night: params.has('night') };
+    if (listed) await startCourse(await loadCourse(base, listed.file), opts);
+    else if (want.startsWith('gen:')) await startCourse(generateCourse(data.site, data.field, Number(want.slice(4)) || 1, genOptions()), opts);
     else showToast(`No course "${want}" for this site.`);
   }
 }

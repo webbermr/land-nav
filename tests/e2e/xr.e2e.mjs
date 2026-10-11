@@ -577,6 +577,58 @@ await check('Jog (VR): tap the left stick press to jog; it ends once you stop', 
   }
 });
 
+await check('VR menu: hold X opens it; the trigger toggles woods, steps the pace count, and flies', async () => {
+  await page.evaluate(() => { window.__xr.buttons.left[4] = true; });
+  await page.waitForFunction(() => window.__landnav.vrMenu.open, null, { timeout: 10000, polling: 50 });
+  await page.evaluate(() => { window.__xr.buttons.left[4] = false; });
+  await frames(2);
+  // Point the right controller at a row (dir -1: left half of its value box) and pull the trigger.
+  const pick = async (label, dir = 1) => {
+    await page.evaluate(([lab, d]) => {
+      const m = window.__landnav.vrMenu;
+      const p = m.rowPoint(m.indexOf(lab), d);
+      window.__t.aim('right', 'ray', window.__t.eye(), p.toArray());
+    }, [label, dir]);
+    await frames(2);
+    await page.evaluate(() => { window.__xr.buttons.right[0] = true; }); await frames(2);
+    await page.evaluate(() => { window.__xr.buttons.right[0] = false; }); await frames(2);
+  };
+  const before = await page.evaluate(() => ({ preset: window.__landnav.settings.preset, pace: window.__landnav.settings.paceCountPer100m }));
+  try {
+    await pick('Woods or open');
+    assert.notEqual(await page.evaluate(() => window.__landnav.settings.preset), before.preset);
+    await pick('Pace count per 100 m', -1);
+    assert.equal(await page.evaluate(() => window.__landnav.settings.paceCountPer100m), before.pace - 1);
+    await pick('Fly');
+    assert.equal(await page.evaluate(() => window.__landnav.fly), true);
+    const y0 = await page.evaluate(() => window.__landnav.player.position.y);
+    await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, -1]; window.__xr.axes.left = [0, 0, 0, -1]; });
+    await frames(20);
+    await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, 0]; window.__xr.axes.left = [0, 0, 0, 0]; });
+    const y1 = await page.evaluate(() => window.__landnav.player.position.y);
+    assert.ok(y1 > y0 + 1, `climbed from ${y0} to ${y1}`);
+    await pick('Fly');
+    const r = await page.evaluate(() => {
+      const L = window.__landnav;
+      const h = L.camera.getWorldPosition(L.camera.position.clone());
+      return { fly: L.fly, y: L.player.position.y, ground: L.terrain.heightAt(h.x, h.z) };
+    });
+    assert.ok(!r.fly && Math.abs(r.y - r.ground) < 0.01, JSON.stringify(r));
+    await pick('Close');
+    assert.equal(await page.evaluate(() => window.__landnav.vrMenu.open), false);
+  } finally {
+    await page.evaluate((b) => {
+      const L = window.__landnav;
+      L.settings.preset = b.preset; L.vegetation.setPreset(b.preset);
+      L.settings.paceCountPer100m = b.pace;
+      L.vrMenu.hide();
+      window.__xr.axes.right = [0, 0, 0, 0]; window.__xr.axes.left = [0, 0, 0, 0];
+    }, before);
+    // Never leave later checks flying.
+    await page.evaluate(() => { const L = window.__landnav; if (L.fly) L.setFly(false); });
+  }
+});
+
 await check('snap turn is off by default, 30 degrees when enabled', async () => {
   const yaw0 = await page.evaluate(() => window.__landnav.player.rotation.y);
   await page.evaluate(() => { window.__xr.axes.right = [0, 0, 1, 0]; });

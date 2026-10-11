@@ -1,0 +1,57 @@
+{
+  "id": "matthews-arm-2",
+  "site": "shenandoah-matthews-arm",
+  "name": "Matthews Arm 2 (open)",
+  "seed": 3802,
+  "time_limit_min": 120,
+  "pass_threshold": 3,
+  "preset": "open",
+  "start": {
+    "x": 995,
+    "z": 1005
+  },
+  "points": [
+    {
+      "code": "C4",
+      "x": 1095,
+      "z": 725
+    },
+    {
+      "code": "C3",
+      "x": 885,
+      "z": 715
+    },
+    {
+      "code": "Y4",
+      "x": 935,
+      "z": 1295
+    },
+    {
+      "code": "A6",
+      "x": 745,
+      "z": 1395
+    }
+  ],
+  "decoys": [
+    {
+      "code": "J7",
+      "x": 1095,
+      "z": 555
+    },
+    {
+      "code": "U9",
+      "x": 1265,
+      "z": 685
+    },
+    {
+      "code": "S1",
+      "x": 745,
+      "z": 1155
+    },
+    {
+      "code": "W1",
+      "x": 1185,
+      "z": 845
+    }
+  ]
+}

@@ -16,7 +16,12 @@ A pass needs at least the course's pass threshold of right codes, inside the tim
 
 The AAR comes in M4.
 
-The bundled site, `demo-synthetic`, is procedural terrain placed at a real UTM location for testing. It is not a real place, and its map says so. Swap in a real site once one is picked (spec section 1).
+Two sites ship with the app. Pick between them in the Course panel.
+
+- **`shenandoah-matthews-arm`** (the default) is real terrain: a 2 km square centred on Matthews Arm Campground in Shenandoah National Park, built from USGS 3DEP 1 m lidar. It uses the 2020 Northern Shenandoah survey, with the 2014 Shenandoah survey filling a corner the 2020 one doesn't cover. Elevation runs from 527 to 1,052 m. Declination is 10.0° W for 2026-10-11 (World Magnetic Model 2025); with 1.7° of grid convergence, the G-M angle is 11.7° W. Courses start at the campground.
+- **`demo-synthetic`** is procedural terrain for testing. It is not a real place, and its map says so.
+
+Shenandoah is a national park: follow park rules if you walk a course for real, and remember the app shows no trails, roads or water.
 
 ## Run it
 
@@ -72,7 +77,7 @@ python3 tools/make_site.py \
     --declination -10.6 --declination-date 2026-10-01
 ```
 
-Pass several `--dem` files if the area spans tiles. The script refuses a playable area that crosses a UTM zone or MGRS 100 km square, or that has holes in the elevation data. It prints the G-M angle and which way to convert. **Read that line.** A declination with the wrong sign silently ruins every azimuth.
+Pass several `--dem` files if the area spans tiles or one survey has gaps; earlier files win where they overlap. `--start-lat/--start-lon/--start-name` set a default course start such as a trailhead. List the site in `sites/index.json` to offer it in the app. The script refuses a playable area that crosses a UTM zone or MGRS 100 km square, or that has holes in the elevation data. It prints the G-M angle and which way to convert. **Read that line.** A declination with the wrong sign silently ruins every azimuth.
 
 `--relief` adds light hillshade to the map. It's off by default because it makes terrain association too easy.
 
@@ -91,7 +96,7 @@ node tools/make_course.mjs --site demo-synthetic --seed 1001 --id day-1 --name "
 # options: --points N --decoys N --time MIN --pass N --preset woods|open
 ```
 
-The generator follows spec 8.3. Legs are 200 to 600 m. Points sit at least 100 m from the boundary, on slopes under 30%. Every stake, the start included, is at least 150 m from every other. Stakes go at the centre of their 10 m grid square, so the 8-digit grid on the card is within about 7 m of the stake. The demo site has `day-1` (woods) and `day-2` (open, 90 minutes). "New random course" in the Course panel generates one in the browser from a seed.
+The generator follows spec 8.3. Legs are 200 to 600 m. Points sit at least 100 m from the boundary, on slopes under 30%. Every stake, the start included, is at least 150 m from every other. Stakes go at the centre of their 10 m grid square, so the 8-digit grid on the card is within about 7 m of the stake. Shenandoah has `matthews-arm-1` (woods) and `matthews-arm-2` (open); the demo site has `day-1` (woods) and `day-2` (open, 90 minutes). On a site with a default start, generated courses start there. "New random course" in the Course panel generates one in the browser from a seed.
 
 ## Tests
 

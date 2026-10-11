@@ -32,7 +32,7 @@ page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 await page.addInitScript(mock);
 const BEACON = { x: 1150, z: 880 };
-await page.goto(`${base}?debug&beacon=${BEACON.x},${BEACON.z}`, { waitUntil: 'load' });
+await page.goto(`${base}?site=demo-synthetic&debug&beacon=${BEACON.x},${BEACON.z}`, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__landnav?.tools, null, { timeout: 60000 });
 await page.evaluate(() => { document.getElementById('help').hidden = true; });
 

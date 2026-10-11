@@ -20,7 +20,8 @@ import { generateCourse, validateCourse } from './course-logic.js';
 import { createBeadsModel, createScoreCard } from './wrist.js';
 
 const params = new URLSearchParams(location.search);
-const siteId = params.get('site') || 'demo-synthetic';
+// The site comes from ?site=, else the first entry in sites/index.json (see start()).
+let siteId = params.get('site');
 const debug = params.has('debug');
 
 const settings = loadSettings();
@@ -540,10 +541,36 @@ function updateXRCourseControls() {
   }
 }
 
+// Generated courses start at the site's default start (a trailhead) when it has one.
+function genOptions() {
+  const s = siteData?.site.default_start;
+  return s ? { start: { x: s.x, z: s.z } } : {};
+}
+
 // ---- Course panel (page UI) ----
 
-function buildCoursePanel(index) {
+function buildCoursePanel(index, sites = []) {
   coursePanel.replaceChildren();
+  if (sites.length > 1) {
+    const sh = document.createElement('h2');
+    sh.textContent = 'Site';
+    const sitePick = document.createElement('select');
+    for (const s of sites) {
+      const o = document.createElement('option');
+      o.value = s.id;
+      o.textContent = s.name;
+      sitePick.append(o);
+    }
+    sitePick.value = siteId;
+    // A site is a whole new world: reload with it.
+    sitePick.addEventListener('change', () => {
+      const q = new URLSearchParams(location.search);
+      q.set('site', sitePick.value);
+      q.delete('course');
+      location.search = q.toString();
+    });
+    coursePanel.append(sh, sitePick);
+  }
   const h = document.createElement('h2');
   h.textContent = 'Course';
   const select = document.createElement('select');
@@ -575,7 +602,7 @@ function buildCoursePanel(index) {
     try {
       const v = select.value;
       const course = v === 'gen'
-        ? generateCourse(siteData.site, siteData.field, Number(seed.value) || 1)
+        ? generateCourse(siteData.site, siteData.field, Number(seed.value) || 1, genOptions())
         : await loadCourse(`sites/${encodeURIComponent(siteId)}`, v.slice(5));
       await startCourse(course);
     } catch (err) {
@@ -589,7 +616,7 @@ function buildCoursePanel(index) {
   endBtn.addEventListener('click', () => finishCourse('ended'));
   const note = document.createElement('p');
   note.className = 'note';
-  note.textContent = 'You start at the START flag. Plot the points from the score card, navigate to each, punch its stake, then come back to the start and end the course.';
+  note.textContent = (siteData.site.default_start ? `The START flag is at ${siteData.site.default_start.name}. ` : '') + 'You start at the START flag. Plot the points from the score card, navigate to each, punch its stake, then come back to the start and end the course.';
   coursePanel.append(h, select, seedRow, startBtn, endBtn, note);
 }
 
@@ -767,7 +794,18 @@ addEventListener('resize', () => {
   renderer.setSize(innerWidth, innerHeight);
 });
 
+async function loadSiteIndex() {
+  try {
+    const res = await fetch('sites/index.json');
+    return res.ok ? await res.json() : [];
+  } catch {
+    return [];
+  }
+}
+
 async function start() {
+  const sites = await loadSiteIndex();
+  siteId ||= sites[0]?.id || 'demo-synthetic';
   setStatus(`Loading site "${siteId}" ...`);
   const base = `sites/${encodeURIComponent(siteId)}`;
   const [data, mapTexture] = await Promise.all([loadSite(base), loadMapTexture(base)]);
@@ -776,7 +814,7 @@ async function start() {
   tools = new Tools({ renderer, camera, site: data.site, mapTexture, settings });
   for (const hand of ['left', 'right']) if (hands[hand].grip) tools.attach(hand, hands[hand]);
   siteData = data;
-  buildCoursePanel(await loadCourseIndex(base));
+  buildCoursePanel(await loadCourseIndex(base), sites);
   mountWrist();
   if (debug && params.get('beacon')) {
     const [bx, bz] = params.get('beacon').split(',').map(Number);
@@ -822,7 +860,7 @@ async function start() {
     const index = await loadCourseIndex(base);
     const listed = index.find((c) => c.id === want);
     if (listed) await startCourse(await loadCourse(base, listed.file));
-    else if (want.startsWith('gen:')) await startCourse(generateCourse(data.site, data.field, Number(want.slice(4)) || 1));
+    else if (want.startsWith('gen:')) await startCourse(generateCourse(data.site, data.field, Number(want.slice(4)) || 1, genOptions()));
     else showToast(`No course "${want}" for this site.`);
   }
 }

@@ -1,0 +1,51 @@
+{
+  "id": "shenandoah-matthews-arm",
+  "name": "Shenandoah NP: Matthews Arm",
+  "utm_zone": "17N",
+  "epsg": 32617,
+  "mgrs_gzd": "17S",
+  "mgrs_100km": "QC",
+  "center_lat": 38.7641367,
+  "center_lon": -78.2957968,
+  "e_west": 733960,
+  "n_north": 4295080,
+  "size_m": 2000,
+  "spacing_m": 4,
+  "grid": 501,
+  "elev_min": 527.1708984375,
+  "elev_max": 1051.7928466796875,
+  "elev_ref": 527.1708984375,
+  "skirt": {
+    "size_m": 6000,
+    "spacing_m": 30,
+    "grid": 201,
+    "e_west": 731970,
+    "n_north": 4297080,
+    "elev_min": 241.9886016845703,
+    "elev_max": 1058.5576171875
+  },
+  "declination_deg": -10.0,
+  "convergence_deg": 1.6941,
+  "gm_angle_deg": -11.6941,
+  "declination_date": "2026-10-11",
+  "contour_interval_m": 10,
+  "index_contour_interval_m": 50,
+  "map": {
+    "px": 4096,
+    "area": [
+      323,
+      110,
+      3773,
+      3560
+    ]
+  },
+  "sources": [
+    "shen.tif",
+    "shen2014.tif"
+  ],
+  "default_start": {
+    "name": "Matthews Arm Campground",
+    "x": 995,
+    "z": 1005
+  }
+}

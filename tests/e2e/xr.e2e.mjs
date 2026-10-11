@@ -273,6 +273,35 @@ await check('M3 desktop: course at the start; punch, beads, card, rows; end and 
   await hudSays(/course is over/);
 });
 
+await check('M4 desktop: the review opens at the end, analyses each leg, downloads JSON, and closes', async () => {
+  await page.waitForFunction(() => !document.getElementById('review').hidden, null, { timeout: 5000 });
+  const a = await page.evaluate(async () => {
+    const src = (f) => new URL(f, document.querySelector('script[type=module][src]').src).href;
+    const { analyzeRun } = await import(src('aar-logic.js'));
+    const l = window.__landnav;
+    const stored = JSON.parse(localStorage.getItem('landnav.lastrun.v1'));
+    const an = analyzeRun(l.lastRun, l.site);
+    const c = document.querySelector('#review canvas');
+    // The board has drawn something other than background.
+    const px = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+    let ink = 0;
+    for (let i = 0; i < px.length; i += 4 * 97) if (px[i] < 120) ink++;
+    return { legs: an.legs.length, correct: an.legs.map((x) => x.correct), stored: stored?.course.id, size: [c.width, c.height], ink, track: l.lastRun.log.track.length };
+  });
+  assert.equal(a.legs, 5, 'four points and the way back');
+  assert.deepEqual(a.correct, [true, false, true, false, null]);
+  assert.equal(a.stored, 'day-1');
+  assert.deepEqual(a.size, [2400, 1400]);
+  assert.ok(a.ink > 500, `ink ${a.ink}`);
+  assert.ok(a.track > 1);
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('#review-download')]);
+  const json = JSON.parse(await (await import('node:fs/promises')).readFile(await download.path(), 'utf8'));
+  assert.equal(json.format, 'land-nav-run');
+  assert.match(download.suggestedFilename(), /^land-nav-day-1-.*\.json$/);
+  await page.keyboard.press('Escape');
+  assert.equal(await page.evaluate(() => document.getElementById('review').hidden), true);
+});
+
 await check('M3 desktop: the clock runs out; a generated course from a seed', async () => {
   const c = await page.evaluate(async () => {
     const c = await window.__t.course({ seed: 4242 });
@@ -287,6 +316,8 @@ await check('M3 desktop: the clock runs out; a generated course from a seed', as
   assert.equal(r.reason, 'time');
   assert.ok(!r.pass);
   await hudSays(/Time is up/);
+  assert.equal(await page.evaluate(() => document.getElementById('review').hidden), false, 'review opens on time-out too');
+  await page.click('#review-close');
 });
 
 await check('Lost lifeline (desktop): K shows a brief, counted "you are here"; can be switched off', async () => {
@@ -629,6 +660,26 @@ await check('M3 VR: course on the wrist; X card, A beads (hold resets), trigger 
   assert.equal(r.correct, 1);
   assert.ok(r.endedAtStart);
   assert.ok(await page.evaluate(() => window.__xr.pulses.some((p) => p.hand === 'right' && p.ms === 80)), 'punch haptic');
+});
+
+await check('M4 VR: the review table appears in front of you; B hides and shows it', async () => {
+  const at = () => page.evaluate(() => {
+    const { reviewBoard, camera } = window.__landnav;
+    const b = reviewBoard.mesh.position, h = camera.getWorldPosition(camera.position.clone());
+    return { visible: reviewBoard.mesh.visible, d: Math.hypot(b.x - h.x, b.z - h.z), below: h.y - b.y };
+  });
+  const r = await at();
+  assert.ok(r.visible, 'shown when the course ended');
+  assert.ok(r.d > 0.5 && r.d < 1 && r.below > 0.3, JSON.stringify(r));
+  const tapB = async () => {
+    await page.evaluate(() => { window.__xr.buttons.right[5] = true; }); await frames(2);
+    await page.evaluate(() => { window.__xr.buttons.right[5] = false; }); await frames(2);
+  };
+  await tapB();
+  assert.equal((await at()).visible, false);
+  await tapB();
+  assert.equal((await at()).visible, true);
+  await tapB();
 });
 
 await check('Lost lifeline (VR): hold the left stick press', async () => {

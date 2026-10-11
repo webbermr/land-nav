@@ -40,6 +40,12 @@
     #course .row[hidden] { display: none; }
     #course button { margin: 6px 6px 0 0; padding: 7px 12px; }
     #course .note { color: #aaa; font-size: 12px; margin: 10px 0 0; }
+    #review { position: fixed; inset: 0; background: rgba(12, 14, 17, 0.94); display: flex; flex-direction: column;
+      align-items: center; padding: 10px; box-sizing: border-box; gap: 8px; z-index: 5; }
+    #review[hidden] { display: none; }
+    #review .bar { display: flex; gap: 8px; align-self: flex-end; }
+    #review button { padding: 7px 14px; }
+    #review canvas { max-width: 100%; max-height: calc(100% - 48px); object-fit: contain; border-radius: 4px; }
     #settings { position: fixed; right: 12px; bottom: 72px; width: 300px; background: rgba(20, 22, 26, 0.92);
       padding: 12px 16px; border-radius: 8px; }
     #settings[hidden] { display: none; }
@@ -78,6 +84,7 @@
       <tr><td>Up / Down</td><td>Course: pick the score-card row</td></tr>
       <tr><td>Enter x2</td><td>Course: end it (be back at the start)</td></tr>
       <tr><td>K</td><td>Lost? Show your position on the map for 15 s (counted)</td></tr>
+      <tr><td>Esc</td><td>Close the after-action review (Course panel: Review last run)</td></tr>
       <tr><td>P</td><td>Settings (pace count)</td></tr>
       <tr><td>H</td><td>Hide this help</td></tr>
     </table>
@@ -96,10 +103,18 @@
       <tr><td>X</td><td>Score card</td></tr>
       <tr><td>Y</td><td>Next score-card row. Hold: end the course</td></tr>
       <tr><td>Hold left stick press</td><td>Lost? Show your position on the map for 15 s (counted)</td></tr>
+      <tr><td>B (map down)</td><td>After a course: show / hide the review table</td></tr>
     </table>
   </div>
   <div id="settings" hidden></div>
   <div id="course" hidden></div>
+  <div id="review" hidden>
+    <div class="bar">
+      <button id="review-download" type="button">Download run (JSON)</button>
+      <button id="review-close" type="button">Close</button>
+    </div>
+    <canvas></canvas>
+  </div>
   <button id="course-button" type="button">Course</button>
   <button id="settings-button" type="button">Settings</button>
   <button id="vr" type="button" disabled>Checking for VR ...</button>

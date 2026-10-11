@@ -1,0 +1,12 @@
+[
+  {
+    "id": "day-1",
+    "name": "Day course 1",
+    "file": "day-1.json"
+  },
+  {
+    "id": "day-2",
+    "name": "Day course 2 (open)",
+    "file": "day-2.json"
+  }
+]

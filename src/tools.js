@@ -242,6 +242,10 @@ export class Tools {
       }
     }
     if (xr.justPressed('right', 'secondary')) this.map.toggleProtractor(local);
+    if (xr.justPressed('right', 'stick')) {
+      const r = this.map.toggleRuler();
+      xr.pulse('right', r === 'no-line' ? 0.15 : 0.4, 20);
+    }
   }
 
   updateBezel(dt, xr) {

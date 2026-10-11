@@ -1,0 +1,57 @@
+{
+  "id": "day-2",
+  "site": "demo-synthetic",
+  "name": "Day course 2 (open)",
+  "seed": 2024,
+  "time_limit_min": 90,
+  "pass_threshold": 3,
+  "preset": "open",
+  "start": {
+    "x": 1565,
+    "z": 1375
+  },
+  "points": [
+    {
+      "code": "S1",
+      "x": 1185,
+      "z": 1655
+    },
+    {
+      "code": "M6",
+      "x": 1385,
+      "z": 1825
+    },
+    {
+      "code": "H4",
+      "x": 1395,
+      "z": 1395
+    },
+    {
+      "code": "F7",
+      "x": 1395,
+      "z": 835
+    }
+  ],
+  "decoys": [
+    {
+      "code": "H7",
+      "x": 1225,
+      "z": 1835
+    },
+    {
+      "code": "J6",
+      "x": 1525,
+      "z": 1715
+    },
+    {
+      "code": "V2",
+      "x": 1035,
+      "z": 1605
+    },
+    {
+      "code": "E6",
+      "x": 1295,
+      "z": 665
+    }
+  ]
+}

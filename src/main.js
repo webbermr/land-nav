@@ -15,6 +15,9 @@ import { buildSettingsPanel, setupVRButton } from './ui.js';
 import { gridAzimuth, gridToMagnetic } from './coords.js';
 import { Tools } from './tools.js';
 import { loadMapTexture } from './map.js';
+import { CourseRun, loadCourse, loadCourseIndex, formatClock } from './course.js';
+import { generateCourse, validateCourse } from './course-logic.js';
+import { createBeadsModel, createScoreCard } from './wrist.js';
 
 const params = new URLSearchParams(location.search);
 const siteId = params.get('site') || 'demo-synthetic';
@@ -79,6 +82,10 @@ let fly = false;
 let terrain = null;
 let tools = null;
 let beacon = null;
+let siteData = null;   // { site, field, ... } from loadSite
+let run = null;        // the current CourseRun, if a course is loaded
+const wrist = { beads: createBeadsModel(), card: createScoreCard(), cardShown: false };
+const coursePanel = document.getElementById('course');
 let boundaryWarning = '';
 
 // ---- Controllers: simple stand-ins at the grip pose, plus the pointing rays ----
@@ -110,6 +117,10 @@ for (let i = 0; i < 2; i++) {
 
 input.on('toggleFly', () => {
   if (renderer.xr.isPresenting) return;
+  if (run && run.state !== 'ended' && !fly) {
+    showToast('Flying is off while a course is running.');
+    return;
+  }
   fly = !fly;
   // Keep the eye where it was: the camera offset moves between rig and camera.
   if (fly) player.position.y += settings.eyeHeight;
@@ -129,6 +140,21 @@ input.on('map', () => {
   input.lookEnabled = !up;
   if (up && document.pointerLockElement) document.exitPointerLock();
 });
+input.on('bead', () => {
+  if (!run) return showToast('Load a course to use the pace beads (Course button).');
+  const p = { x: player.position.x, z: player.position.z };
+  if (input.isDown('fast')) {
+    run.resetBeads(p);
+    showToast('Beads reset.');
+  } else {
+    run.slideBead(p);
+  }
+});
+input.on('punch', () => {
+  if (!run) return showToast('Load a course first (Course button).');
+  showToast(punchMessage(run.punch({ x: player.position.x, z: player.position.z })));
+});
+input.on('scoreCard', () => setCardShown(!wrist.cardShown));
 input.on('compass', () => {
   if (!tools || renderer.xr.isPresenting) return;
   tools.toggleDesktopCompass();
@@ -139,6 +165,12 @@ function setPointer(e) {
   tools.pointer = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
 }
 renderer.domElement.addEventListener('mousemove', setPointer);
+const RULER_MESSAGES = {
+  shown: 'Ruler laid along the last line, zero on its first dot. L again to take it away.',
+  hidden: 'Ruler put away.',
+  'no-line': 'Draw a line first (click two dots), then L lays the ruler along it.',
+};
+
 // What each map click did, in words, so a click is never silent.
 const CLICK_MESSAGES = {
   dot: 'Dot placed. Click a dot, then another, to draw a line between them.',
@@ -173,6 +205,13 @@ addEventListener('keydown', (e) => {
   footfalls.unlock();
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
   if (e.code === 'KeyP') togglePanel();
+  if (renderer.xr.isPresenting) return;
+  if (run && wrist.cardShown && (e.code === 'ArrowUp' || e.code === 'ArrowDown')) {
+    e.preventDefault();
+    run.selectRow(e.code === 'ArrowUp' ? -1 : 1);
+  }
+  if (e.code === 'Enter' && run && run.state !== 'ended') requestEndCourse();
+  if (e.code === 'KeyL' && tools?.desktopMap) showToast(RULER_MESSAGES[tools.map.toggleRuler()]);
   if ((e.code === 'Delete' || e.code === 'Backspace') && tools?.desktopMap) {
     showToast(tools.desktopErase() ? 'Dot erased.' : 'Point at a dot, then press Delete to erase it.');
   }
@@ -184,6 +223,7 @@ function togglePanel() {
   panel.hidden = !panel.hidden;
   if (!panel.hidden) {
     help.hidden = true; // they share the right edge
+    coursePanel.hidden = true;
     if (document.pointerLockElement) document.exitPointerLock();
   }
 }
@@ -249,6 +289,7 @@ function updateDesktop(dt) {
   player.position.y = terrain.heightAt(player.position.x, player.position.z);
   playFeet(step.feet);
   updateBoundaryWarning(player.position.x, player.position.z);
+  courseTick(dt, player.position.x, player.position.z, step.dx !== 0 || step.dz !== 0);
 }
 
 function updateXR(dt) {
@@ -287,6 +328,8 @@ function updateXR(dt) {
 
   // Tools. While the compass is in hand the right stick turns its bezel.
   const compassHeld = tools ? tools.updateXR(dt, xrInput) : false;
+  updateXRCourseControls();
+  courseTick(dt, head.x, head.z, step.dx !== 0 || step.dz !== 0);
 
   // Snap turn (off by default): rotate the rig about the head.
   if (settings.snapTurn && !compassHeld) {
@@ -309,6 +352,216 @@ function updateXR(dt) {
   updateBoundaryWarning(head.x, head.z);
 }
 
+// ---- Courses ----
+
+const PUNCH_MESSAGES = {
+  none: 'No stake within 2 m.',
+  ended: 'The course is over.',
+};
+function punchMessage(r) {
+  return r.kind === 'punch' ? `Punched ${r.code} into row ${r.row + 1}.` : PUNCH_MESSAGES[r.kind];
+}
+
+const HINTS = {
+  desktop: 'E punch a stake within 2 m. Space bead, Shift+Space reset. Up/Down pick the row. Tab hides this. Enter twice to end (be back at the start).',
+  vr: 'Trigger punches a stake within 2 m. A slides a bead, hold A to reset. Y picks the next row; hold Y to end (be back at the start). X hides this.',
+};
+
+function setCardShown(shown) {
+  wrist.cardShown = shown;
+  wrist.card.mesh.visible = shown;
+}
+
+// The wrist kit lives on the left controller in VR and in the corners of the screen on desktop.
+function mountWrist() {
+  const grip = hands.left.grip;
+  if (renderer.xr.isPresenting && grip) {
+    grip.add(wrist.beads.group);
+    wrist.beads.group.position.set(-0.04, -0.06, 0.06);
+    wrist.beads.group.rotation.set(0, 0, 0);
+    wrist.beads.group.scale.setScalar(1);
+    grip.add(wrist.card.mesh);
+    wrist.card.mesh.position.set(0, 0.04, 0.12);
+    wrist.card.mesh.rotation.set(-1.15, 0, 0);
+    wrist.card.mesh.scale.setScalar(1);
+  } else {
+    const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    camera.add(wrist.beads.group);
+    wrist.beads.group.position.set(-t * camera.aspect * 0.4 * 0.88, -0.06, -0.4);
+    wrist.beads.group.scale.setScalar(0.9);
+    camera.add(wrist.card.mesh);
+    wrist.card.mesh.position.set(t * camera.aspect * 0.45 * 0.68, -0.02, -0.45);
+    wrist.card.mesh.rotation.set(0, 0, 0);
+    wrist.card.mesh.scale.setScalar(1.4);
+  }
+  wrist.beads.group.visible = !!run;
+}
+
+async function startCourse(course) {
+  run?.dispose();
+  run = new CourseRun({ scene, terrain, site: siteData.site, course, settings });
+  const problems = validateCourse(course, siteData.site, siteData.field);
+  if (problems.length) console.warn(`Course ${course.id} breaks the generator's rules:\n  ${problems.join('\n  ')}`);
+  // The course sets the woods/open preset for this run (not saved as a setting).
+  settings.preset = course.preset || settings.preset;
+  applyPreset();
+  tools?.map.clear();
+  loco.pace.reset();
+  if (fly) { fly = false; placeDesktopCamera(); }
+  // Stand at the start, facing grid north.
+  if (renderer.xr.isPresenting) {
+    camera.getWorldPosition(head);
+    player.position.x += course.start.x - head.x;
+    player.position.z += course.start.z - head.z;
+  } else {
+    player.position.set(course.start.x, 0, course.start.z);
+    input.yaw = 0;
+    input.pitch = 0;
+  }
+  snapPlayerToGround();
+  mountWrist();
+  setCardShown(true);
+  coursePanel.hidden = true;
+  showToast(`${course.name}: plot your points from the score card. The clock starts when you move.`);
+  return run;
+}
+
+let endConfirmUntil = 0;
+function requestEndCourse() {
+  if (performance.now() < endConfirmUntil) {
+    endConfirmUntil = 0;
+    finishCourse('ended');
+  } else {
+    endConfirmUntil = performance.now() + 3000;
+    showToast('Press Enter again to end the course. Be back at the start first.');
+  }
+}
+
+function currentPos() {
+  if (renderer.xr.isPresenting) {
+    camera.getWorldPosition(head);
+    return { x: head.x, z: head.z };
+  }
+  return { x: player.position.x, z: player.position.z };
+}
+
+function finishCourse(reason) {
+  if (!run || run.state === 'ended') return;
+  const r = run.end(currentPos(), reason);
+  setCardShown(true);
+  showToast(`Course over: ${r.correct}/${r.total} correct, ${r.pass ? 'PASS' : 'FAIL'}.${reason === 'time' ? ' Out of time.' : ''}`);
+}
+
+function courseTick(dt, x, z, moving) {
+  if (!run) return;
+  const wasRunning = run.state === 'running';
+  run.update(dt, { x, z }, { moving, mapOut: tools?.map.group.visible, compassOut: tools?.compass.group.visible });
+  if (wasRunning && run.state === 'ended') {
+    setCardShown(true);
+    showToast(`Time is up: ${run.result.correct}/${run.result.total} correct, ${run.result.pass ? 'PASS' : 'FAIL'}.`);
+  }
+  wrist.beads.update(run.beads);
+  if (wrist.cardShown) wrist.card.draw(run, renderer.xr.isPresenting ? HINTS.vr : HINTS.desktop);
+}
+
+// VR course controls: X card, Y row (hold: end), A bead (hold: reset), trigger punch.
+const holds = {};
+function holdButton(hand, button, holdSec, { onTap, onHold }) {
+  const key = `${hand}:${button}`;
+  const now = performance.now() / 1000;
+  if (xrInput.justPressed(hand, button)) holds[key] = { t: now, fired: false };
+  const h = holds[key];
+  if (!h) return;
+  if (xrInput.isDown(hand, button)) {
+    if (!h.fired && now - h.t >= holdSec) { h.fired = true; onHold?.(); }
+  } else {
+    if (!h.fired) onTap?.();
+    delete holds[key];
+  }
+}
+
+function updateXRCourseControls() {
+  if (xrInput.justPressed('left', 'primary')) setCardShown(!wrist.cardShown);
+  if (!run) return;
+  const pos = { x: head.x, z: head.z };
+  holdButton('right', 'primary', 1, {
+    onTap: () => { run.slideBead(pos); xrInput.pulse('right', 0.3, 12); },
+    onHold: () => { run.resetBeads(pos); xrInput.pulse('right', 0.8, 60); },
+  });
+  holdButton('left', 'secondary', 1.5, {
+    onTap: () => { if (wrist.cardShown) run.selectRow(1); },
+    onHold: () => { finishCourse('ended'); xrInput.pulse('left', 0.9, 120); },
+  });
+  // The trigger punches when the map isn't up (with the map up it's the pencil).
+  if (xrInput.justPressed('right', 'trigger') && !tools?.map.group.visible) {
+    const r = run.punch(pos);
+    if (r.kind === 'punch') xrInput.pulse('right', 1, 80);
+    else xrInput.pulse('right', 0.2, 20);
+  }
+}
+
+// ---- Course panel (page UI) ----
+
+function buildCoursePanel(index) {
+  coursePanel.replaceChildren();
+  const h = document.createElement('h2');
+  h.textContent = 'Course';
+  const select = document.createElement('select');
+  for (const c of index) {
+    const o = document.createElement('option');
+    o.value = `file:${c.file}`;
+    o.textContent = c.name;
+    select.append(o);
+  }
+  const gen = document.createElement('option');
+  gen.value = 'gen';
+  gen.textContent = 'New random course';
+  select.append(gen);
+  const seedRow = document.createElement('label');
+  seedRow.className = 'row';
+  const seedLabel = document.createElement('span');
+  seedLabel.textContent = 'Seed';
+  const seed = document.createElement('input');
+  seed.type = 'number';
+  seed.value = String(Math.floor(Math.random() * 100000));
+  seedRow.append(seedLabel, seed);
+  const syncSeed = () => { seedRow.hidden = select.value !== 'gen'; };
+  select.addEventListener('change', syncSeed);
+  syncSeed();
+  const startBtn = document.createElement('button');
+  startBtn.type = 'button';
+  startBtn.textContent = 'Start course';
+  startBtn.addEventListener('click', async () => {
+    try {
+      const v = select.value;
+      const course = v === 'gen'
+        ? generateCourse(siteData.site, siteData.field, Number(seed.value) || 1)
+        : await loadCourse(`sites/${encodeURIComponent(siteId)}`, v.slice(5));
+      await startCourse(course);
+    } catch (err) {
+      console.error(err);
+      showToast(`Could not start: ${err.message}`);
+    }
+  });
+  const endBtn = document.createElement('button');
+  endBtn.type = 'button';
+  endBtn.textContent = 'End course';
+  endBtn.addEventListener('click', () => finishCourse('ended'));
+  const note = document.createElement('p');
+  note.className = 'note';
+  note.textContent = 'You start at the START flag. Plot the points from the score card, navigate to each, punch its stake, then come back to the start and end the course.';
+  coursePanel.append(h, select, seedRow, startBtn, endBtn, note);
+}
+
+document.getElementById('course-button').addEventListener('click', () => {
+  coursePanel.hidden = !coursePanel.hidden;
+  if (!coursePanel.hidden) {
+    panel.hidden = true;
+    help.hidden = true;
+    if (document.pointerLockElement) document.exitPointerLock();
+  }
+});
+
 // ---- VR session ----
 
 async function enterVR() {
@@ -330,6 +583,7 @@ async function enterVR() {
     snapPlayerToGround();
     session.addEventListener('end', exitVR);
     await renderer.xr.setSession(session);
+    mountWrist();
     vrButton.textContent = 'Exit VR';
   } catch (err) {
     console.error(err);
@@ -351,6 +605,7 @@ function exitVR() {
   snapPlayerToGround();
   vignette.update(0, 1);
   tools?.mountDesktop();
+  mountWrist();
   vrButton.textContent = 'Enter VR';
 }
 
@@ -386,6 +641,7 @@ function updateHud(dt) {
     lines.push(`walked ${loco.pace.distance.toFixed(1)} m  paces ${loco.pace.leftCount}  grade ${(loco.lastGrade * 100).toFixed(0)}%`);
     const c = compassDebug();
     if (c) lines.push(c);
+    if (run) lines.push(`course ${run.course.id} ${run.state} ${formatClock(run.elapsed)} row ${run.row + 1} beads ${run.beads.metres} m`);
   }
   if (boundaryWarning) lines.push(boundaryWarning);
   if (!input.locked && !renderer.xr.isPresenting && !tools?.desktopMap) lines.push('Click to look around. M map, C compass, H help, P settings.');
@@ -479,6 +735,9 @@ async function start() {
   scene.add(terrain.group);
   tools = new Tools({ renderer, camera, site: data.site, mapTexture, settings });
   for (const hand of ['left', 'right']) if (hands[hand].grip) tools.attach(hand, hands[hand]);
+  siteData = data;
+  buildCoursePanel(await loadCourseIndex(base));
+  mountWrist();
   if (debug && params.get('beacon')) {
     const [bx, bz] = params.get('beacon').split(',').map(Number);
     if (Number.isFinite(bx) && Number.isFinite(bz)) {
@@ -488,8 +747,8 @@ async function start() {
   }
   document.title = `${data.site.name} | Land Nav`;
 
-  // Start on the ground in the middle of the area, facing grid north.
-  // (Courses supply a start point from M3.)
+  // Start on the ground in the middle of the area, facing grid north, until a
+  // course puts you at its start.
   const s = terrain.size;
   player.position.set(s / 2, 0, s / 2);
   if (debug && params.get('start')) {
@@ -512,7 +771,20 @@ async function start() {
   });
 
   // Exposed for automated checks and console poking. Not a gameplay API.
-  window.__landnav = { camera, player, terrain, site: data.site, renderer, scene, settings, loco, input, tools, beacon };
+  window.__landnav = {
+    camera, player, terrain, site: data.site, field: data.field, renderer, scene, settings, loco, input, tools, beacon, wrist, startCourse,
+    get run() { return run; },
+  };
+
+  // ?course=<id> loads a listed course; ?course=gen:<seed> generates one.
+  const want = params.get('course');
+  if (want) {
+    const index = await loadCourseIndex(base);
+    const listed = index.find((c) => c.id === want);
+    if (listed) await startCourse(await loadCourse(base, listed.file));
+    else if (want.startsWith('gen:')) await startCourse(generateCourse(data.site, data.field, Number(want.slice(4)) || 1));
+    else showToast(`No course "${want}" for this site.`);
+  }
 }
 
 start().catch((err) => {

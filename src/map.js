@@ -2,7 +2,7 @@
 // and a protractor. Marks are stored in scene metres so later milestones (AAR,
 // scoring) can use them. The board never shows where you are.
 import * as THREE from 'three';
-import { BOARD_SIZE_M, boardToScene, insideTerrain, sceneToBoard, sceneToMapPx } from './map-math.js';
+import { BOARD_SIZE_M, boardScale, boardToScene, insideTerrain, sceneToBoard, sceneToMapPx } from './map-math.js';
 import { gridAzimuth, gridToMagnetic, degToMils, horizontalDistance } from './coords.js';
 
 const OVERLAY_PX = 2048;
@@ -61,6 +61,51 @@ function drawProtractor(size = 1024) {
   return tex;
 }
 
+// A measuring strip at map scale, like the scale edge of a GTA protractor: 0 to
+// 1000 m, ticks every 10 m. It's laid along the last line drawn, zero on its first dot.
+function makeRuler(site) {
+  const metres = 1000;
+  const groundPerBoard = boardScale(site);
+  const len = metres / groundPerBoard;   // board metres for 1000 m on the ground
+  const pad = 0.006;                     // paper past each end
+  const W = 2048, H = 112;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const g = c.getContext('2d');
+  g.fillStyle = 'rgba(255,253,240,0.93)';
+  g.fillRect(0, 0, W, H);
+  g.strokeStyle = '#000'; g.lineWidth = 2;
+  g.strokeRect(1, 1, W - 2, H - 2);
+  const px0 = (pad / (len + 2 * pad)) * W;
+  const pxPerM = (len / (len + 2 * pad)) * W / metres;
+  g.textAlign = 'center'; g.textBaseline = 'bottom';
+  for (let m = 0; m <= metres; m += 10) {
+    const x = px0 + m * pxPerM;
+    const big = m % 100 === 0, mid = m % 50 === 0;
+    g.strokeStyle = '#000';
+    g.lineWidth = big ? 3 : 1.6;
+    g.beginPath(); g.moveTo(x, 0); g.lineTo(x, big ? 46 : mid ? 34 : 22); g.stroke();
+    if (big) {
+      g.fillStyle = '#000';
+      g.font = 'bold 34px system-ui, sans-serif';
+      g.fillText(String(m), x, H - 8);
+    }
+  }
+  g.font = '24px system-ui, sans-serif';
+  g.textAlign = 'right';
+  g.fillText('metres', W - 12, H - 10);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  const width = 0.016;
+  // Local origin at the zero mark; the strip hangs below the line it measures.
+  const geo = new THREE.PlaneGeometry(len + 2 * pad, width).translate((len + 2 * pad) / 2 - pad, -width / 2, 0);
+  const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }));
+  mesh.name = 'ruler';
+  mesh.visible = false;
+  return mesh;
+}
+
 export class MapBoard {
   constructor(renderer, site, mapTexture, settings) {
     this.site = site;
@@ -114,6 +159,11 @@ export class MapBoard {
     this.protractor.position.z = 0.0009;
     this.protractor.visible = false;
     group.add(this.protractor);
+
+    this.ruler = makeRuler(site);
+    this.ruler.position.z = 0.001;
+    this.rulerLine = null;
+    group.add(this.ruler);
 
     this.cursor = new THREE.Mesh(
       new THREE.RingGeometry(0.0028, 0.0045, 24),
@@ -198,8 +248,34 @@ export class MapBoard {
     if (this.protractorDot === hit.id) this.protractorDot = null;
     if (this.lastLine && (this.lastLine.a === hit.id || this.lastLine.b === hit.id)) this.lastLine = null;
     this.placeProtractor();
+    this.placeRuler();
     this.redraw();
     return true;
+  }
+
+  // Lay the strip along the last line drawn, or take it away.
+  // Returns 'shown' | 'hidden' | 'no-line'.
+  toggleRuler() {
+    if (this.ruler.visible) {
+      this.ruler.visible = false;
+      this.rulerLine = null;
+      return 'hidden';
+    }
+    if (!this.lastLine) return 'no-line';
+    this.rulerLine = this.lastLine;
+    this.placeRuler();
+    return this.ruler.visible ? 'shown' : 'no-line';
+  }
+
+  placeRuler() {
+    const l = this.rulerLine;
+    const a = l && this.dots.find((d) => d.id === l.a);
+    const b = l && this.dots.find((d) => d.id === l.b);
+    this.ruler.visible = !!(a && b);
+    if (!a || !b) { this.rulerLine = null; return; }
+    const pa = this.boardOf(a), pb = this.boardOf(b);
+    this.ruler.position.set(pa.bx, pa.by, this.ruler.position.z);
+    this.ruler.rotation.set(0, 0, Math.atan2(pb.by - pa.by, pb.bx - pa.bx));
   }
 
   placeProtractor() {
@@ -273,6 +349,8 @@ export class MapBoard {
     this.selected = null;
     this.protractorDot = null;
     this.lastLine = null;
+    this.rulerLine = null;
+    this.ruler.visible = false;
     this.placeProtractor();
     this.redraw();
   }

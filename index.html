@@ -28,6 +28,18 @@
     #settings-button { position: fixed; right: 12px; bottom: 24px; padding: 10px 14px; border: 0;
       border-radius: 6px; background: rgba(20, 22, 26, 0.82); color: #eee; font: 14px system-ui, sans-serif;
       cursor: pointer; }
+    #course-button { position: fixed; right: 108px; bottom: 24px; padding: 10px 14px; border: 0;
+      border-radius: 6px; background: rgba(20, 22, 26, 0.82); color: #eee; font: 14px system-ui, sans-serif;
+      cursor: pointer; }
+    #course { position: fixed; right: 12px; bottom: 72px; width: 300px; background: rgba(20, 22, 26, 0.92);
+      padding: 12px 16px; border-radius: 8px; }
+    #course[hidden] { display: none; }
+    #course h2 { font-size: 15px; margin: 0 0 8px; }
+    #course select { width: 100%; margin-bottom: 8px; }
+    #course .row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: 6px 0; }
+    #course .row[hidden] { display: none; }
+    #course button { margin: 6px 6px 0 0; padding: 7px 12px; }
+    #course .note { color: #aaa; font-size: 12px; margin: 10px 0 0; }
     #settings { position: fixed; right: 12px; bottom: 72px; width: 300px; background: rgba(20, 22, 26, 0.92);
       padding: 12px 16px; border-radius: 8px; }
     #settings[hidden] { display: none; }
@@ -59,6 +71,12 @@
       <tr><td>Delete</td><td>Map: erase the dot under the cursor</td></tr>
       <tr><td>C</td><td>Compass up / down</td></tr>
       <tr><td>Wheel</td><td>Compass: turn the bezel. Map: zoom</td></tr>
+      <tr><td>L</td><td>Map: ruler along the last line</td></tr>
+      <tr><td>E</td><td>Course: punch a stake within 2 m</td></tr>
+      <tr><td>Space</td><td>Course: slide a pace bead (Shift+Space resets)</td></tr>
+      <tr><td>Tab</td><td>Course: score card</td></tr>
+      <tr><td>Up / Down</td><td>Course: pick the score-card row</td></tr>
+      <tr><td>Enter x2</td><td>Course: end it (be back at the start)</td></tr>
       <tr><td>P</td><td>Settings (pace count)</td></tr>
       <tr><td>H</td><td>Hide this help</td></tr>
     </table>
@@ -71,9 +89,16 @@
       <tr><td>Right stick</td><td>Compass: bezel. Otherwise snap turn, if enabled</td></tr>
       <tr><td>Right trigger</td><td>Map: dot / select / line. Hold on a dot: erase</td></tr>
       <tr><td>B</td><td>Map: protractor on a dot</td></tr>
+      <tr><td>Right stick press</td><td>Map: ruler along the last line</td></tr>
+      <tr><td>Right trigger</td><td>Course (map down): punch a stake within 2 m</td></tr>
+      <tr><td>A</td><td>Slide a pace bead. Hold: reset</td></tr>
+      <tr><td>X</td><td>Score card</td></tr>
+      <tr><td>Y</td><td>Next score-card row. Hold: end the course</td></tr>
     </table>
   </div>
   <div id="settings" hidden></div>
+  <div id="course" hidden></div>
+  <button id="course-button" type="button">Course</button>
   <button id="settings-button" type="button">Settings</button>
   <button id="vr" type="button" disabled>Checking for VR ...</button>
   <div id="status">Loading ...</div>

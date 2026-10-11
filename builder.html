@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Site Builder | Land Nav</title>
+  <link rel="stylesheet" href="./vendor/leaflet/leaflet.css">
+  <style>
+    :root { --bg: #1b1f23; --panel: #23282e; --line: #39414a; --text: #e9ecef; --dim: #9aa4ad; --accent: #ffd27a; --bad: #ff8a80; --good: #8fd694; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+    body { display: flex; flex-direction: column; }
+    header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--line); }
+    header h1 { font-size: 16px; margin: 0; }
+    header a { color: var(--accent); margin-left: auto; }
+    main { flex: 1; display: flex; min-height: 0; }
+    #map { flex: 1; min-height: 300px; }
+    #panel { width: 400px; overflow-y: auto; padding: 12px 16px 24px; background: var(--panel); border-left: 1px solid var(--line); }
+    @media (max-width: 800px) {
+      main { flex-direction: column; }
+      #map { flex: none; height: 50vh; }
+      #panel { width: auto; border-left: 0; border-top: 1px solid var(--line); }
+    }
+    h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 18px 0 6px; }
+    .tabs { display: flex; gap: 6px; }
+    .tabs button { flex: 1; padding: 8px; border: 1px solid var(--line); background: transparent; color: var(--text); border-radius: 6px; cursor: pointer; font: inherit; }
+    .tabs button[aria-pressed="true"] { background: var(--accent); color: #1b1f23; border-color: var(--accent); font-weight: 600; }
+    label.row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 6px 0; }
+    label.check { display: flex; align-items: flex-start; gap: 8px; margin: 6px 0; }
+    input[type=text], input[type=number], select { background: #15191d; color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 5px 7px; font: inherit; min-width: 0; }
+    input[type=text] { width: 230px; }
+    input[type=number] { width: 70px; }
+    .note { color: var(--dim); font-size: 12.5px; margin: 4px 0; }
+    .status { margin: 6px 0; font-size: 13px; }
+    .bad { color: var(--bad); }
+    .good { color: var(--good); }
+    button.act { padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: #2d343b; color: var(--text); cursor: pointer; font: inherit; }
+    button.act[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+    button.primary { width: 100%; padding: 11px; margin-top: 10px; border: 0; border-radius: 8px; background: var(--accent); color: #1b1f23; font: 600 15px system-ui, sans-serif; cursor: pointer; }
+    button.primary:disabled { background: #555; color: #bbb; cursor: default; }
+    .course { display: grid; grid-template-columns: 1fr auto auto; gap: 6px; align-items: center; margin: 4px 0; }
+    .course input[type=text] { width: 100%; }
+    ul.errors { margin: 6px 0; padding-left: 18px; color: var(--bad); }
+    pre { background: #15191d; border: 1px solid var(--line); border-radius: 6px; padding: 8px; overflow-x: auto; font-size: 12px; white-space: pre-wrap; word-break: break-all; }
+    details summary { cursor: pointer; color: var(--dim); margin-top: 8px; }
+    #builds li { margin: 3px 0; }
+    #builds a { color: var(--text); }
+    .pill { font-size: 11px; padding: 1px 6px; border-radius: 9px; margin-left: 6px; }
+    .pill.open { background: #3b4f2c; color: var(--good); }
+    .pill.closed { background: #3a3f45; color: var(--dim); }
+    .leaflet-container { background: #2a2f35; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Land Nav: site builder</h1>
+    <a href="./">Back to the app</a>
+  </header>
+  <main>
+    <div id="map"></div>
+    <section id="panel">
+      <div class="tabs">
+        <button type="button" id="tab-new" aria-pressed="true">New site</button>
+        <button type="button" id="tab-update" aria-pressed="false">Update a site</button>
+      </div>
+
+      <div id="new-site">
+        <h2>Where</h2>
+        <p class="note">Click the map to place the square. Drag its centre to move it.</p>
+        <label class="row"><span>Size</span>
+          <select id="size"><option value="1000">1 km</option><option value="1500">1.5 km</option><option value="2000" selected>2 km</option><option value="3000">3 km</option></select>
+        </label>
+        <label class="row"><span>Go to</span><input type="text" id="goto" placeholder="lat, lon  e.g. 38.551, -78.316"></label>
+        <div class="status" id="square-status">No square yet.</div>
+        <h2>Course start</h2>
+        <button type="button" class="act" id="place-start" aria-pressed="false">Place the start</button>
+        <button type="button" class="act" id="clear-start">Clear</button>
+        <label class="row"><span>Start name</span><input type="text" id="start-name" placeholder="Trailhead" maxlength="60"></label>
+        <p class="note">Optional: a trailhead or parking area inside the square. Without one, each course picks its own start.</p>
+        <h2>Name</h2>
+        <label class="row"><span>Name</span><input type="text" id="site-name" placeholder="Shenandoah NP: Old Rag" maxlength="60"></label>
+        <label class="row"><span>Id</span><input type="text" id="site-id" placeholder="old-rag" maxlength="41"></label>
+        <label class="row"><span>Declination</span><input type="text" id="declination" placeholder="auto"></label>
+        <p class="note">Leave declination as auto: the build works it out from the World Magnetic Model for today. Or enter NOAA's figure, west negative.</p>
+      </div>
+
+      <div id="update-site" hidden>
+        <h2>Site</h2>
+        <label class="row"><span>Site</span><select id="site-pick"></select></label>
+        <div class="status" id="site-status"></div>
+      </div>
+
+      <h2>Add</h2>
+      <label class="check"><input type="checkbox" id="landcover" checked><span>Real tree cover (NLCD land cover; lower 48 states only)</span></label>
+      <label class="check"><input type="checkbox" id="roads" checked><span>Roads, trails, streams and buildings (OpenStreetMap)</span></label>
+
+      <h2>Courses</h2>
+      <label class="row"><span>Day courses</span><input type="number" id="day-count" min="0" max="5" value="2"></label>
+      <label class="row"><span>Night courses</span><input type="number" id="night-count" min="0" max="5" value="1"></label>
+      <div id="course-list"></div>
+      <p class="note">Day legs 200-600 m in 2 hours; night legs 150-350 m in 2.5 hours. Stakes keep clear of roads and buildings.</p>
+
+      <h2>Build</h2>
+      <ul class="errors" id="errors"></ul>
+      <button type="button" class="primary" id="send">Send to GitHub</button>
+      <p class="note">This opens a GitHub issue with your request filled in. Press <b>Submit new issue</b>. A build then runs on GitHub (5 to 10 minutes) and posts a pull request on the issue. Merge it and the site is live. Only the repository's owner and collaborators can start builds.</p>
+      <details><summary>Run it in a terminal instead</summary><pre id="cli"></pre></details>
+      <details><summary>The request</summary><pre id="json"></pre></details>
+
+      <h2>Recent builds</h2>
+      <ul id="builds" class="note"><li>Loading ...</li></ul>
+    </section>
+  </main>
+  <script src="./vendor/leaflet/leaflet.js"></script>
+  <script type="module" src="./src/builder/main.js"></script>
+</body>
+</html>

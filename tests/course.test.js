@@ -131,3 +131,19 @@ test('run log: samples about once a second, tool intervals, distance', () => {
   assert.deepEqual(log.events, [{ t: 4.5, type: 'punch', code: 'K7' }]);
   assert.deepEqual(Object.keys(log.toJSON()), ['track', 'events', 'intervals']);
 });
+
+test('validateCourse: a steep start (a trailhead) is fine; steep stakes are not', async () => {
+  const { Heightfield } = await import('../src/heightfield.js');
+  // A plane rising 35% to the east: every point is steep.
+  const g = 101, sp = 10;
+  const h = new Float32Array(g * g);
+  for (let r = 0; r < g; r++) for (let c = 0; c < g; c++) h[r * g + c] = 0.35 * c * sp;
+  const field = new Heightfield(h, g, sp);
+  const site = { size_m: field.size };
+  const course = {
+    start: { x: 500, z: 500 }, points: [{ code: 'A1', x: 500, z: 200 }], decoys: [], pass_threshold: 1,
+  };
+  const problems = validateCourse(course, site, field, { legMin: 100, legMax: 1000 });
+  assert.ok(!problems.some((p) => p.startsWith('START')), problems.join('; '));
+  assert.ok(problems.some((p) => p.startsWith('A1 is on a 35% slope')), problems.join('; '));
+});

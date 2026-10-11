@@ -1,0 +1,103 @@
+# Builds sites and courses requested from the web builder (builder.html).
+#
+# The builder opens an issue titled "[build] ..." whose body holds a JSON request.
+# This runs tools/build_request.py on it, pushes the results to a branch, opens a
+# pull request, and comments on the issue. Merge the PR and Pages publishes it.
+#
+# Only issues opened by the repo owner, members or collaborators are built. The
+# request is untrusted text: build_request.py validates it, and nothing from the
+# issue is ever put into a shell command here.
+#
+# For the PR step, allow Actions to open pull requests: repo Settings -> Actions ->
+# General -> Workflow permissions -> "Allow GitHub Actions to create and approve pull
+# requests". Without it the branch is still pushed, and the issue comment links to
+# a one-click "open a pull request" page instead.
+name: Build site
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: build-site
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: >-
+      startsWith(github.event.issue.title, '[build]') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ISSUE: ${{ github.event.issue.number }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/requirements.txt
+      - run: pip install -r tools/requirements.txt
+
+      - name: Say it started
+        run: gh issue comment "$ISSUE" --body "Building... follow along at $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+
+      - name: Build
+        id: build
+        run: python tools/build_request.py --event "$GITHUB_EVENT_PATH" --summary "$RUNNER_TEMP/summary.md"
+
+      - name: Check the app still loads its data
+        if: success()
+        run: npm test
+
+      - name: Push a branch and open a pull request
+        if: success()
+        env:
+          SITE: ${{ steps.build.outputs.site_id }}
+          ACTION: ${{ steps.build.outputs.action }}
+        run: |
+          branch="build/${SITE}-${ISSUE}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add sites
+          if git diff --cached --quiet; then
+            gh issue comment "$ISSUE" --body "The build ran but changed nothing."
+            exit 0
+          fi
+          git commit -q -m "${ACTION}: ${SITE} (from #${ISSUE})"
+          git push -q origin "$branch"
+          {
+            cat "$RUNNER_TEMP/summary.md"
+            echo
+            echo "Built from #${ISSUE} by the site builder. Merge to publish it."
+            echo
+            echo "Closes #${ISSUE}"
+          } > "$RUNNER_TEMP/pr.md"
+          if url=$(gh pr create --base main --head "$branch" --title "${ACTION}: ${SITE}" --body-file "$RUNNER_TEMP/pr.md" 2>"$RUNNER_TEMP/pr.err"); then
+            next="Pull request: $url. Merge it to publish."
+          else
+            next="Pushed to \`$branch\`, but Actions isn't allowed to open pull requests here ($(head -c 200 "$RUNNER_TEMP/pr.err")). Open one in a click: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/main...$branch?expand=1"
+          fi
+          { cat "$RUNNER_TEMP/summary.md"; echo; echo "$next"; } > "$RUNNER_TEMP/comment.md"
+          gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/comment.md"
+
+      - name: Report a failure
+        if: failure()
+        run: |
+          {
+            if [ -s "$RUNNER_TEMP/summary.md" ]; then cat "$RUNNER_TEMP/summary.md"; else echo "The build failed before it could say why."; fi
+            echo
+            echo "Log: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          } > "$RUNNER_TEMP/comment.md"
+          gh issue comment "$ISSUE" --body-file "$RUNNER_TEMP/comment.md"

@@ -49,6 +49,7 @@ jobs:
           python3 -m http.server 8080 >/dev/null 2>&1 &
           sleep 1
           node tests/e2e/xr.e2e.mjs http://localhost:8080/
+          node tests/e2e/builder.e2e.mjs http://localhost:8080/
 
   deploy:
     needs: [test, browser]
@@ -75,6 +76,9 @@ jobs:
           sed -e "s#\./vendor/#./$V/vendor/#g" -e "s#\./src/main\.js#./$V/src/main.js#" index.html > _site/index.html
           grep -q "$V/src/main.js" _site/index.html
           grep -q "$V/vendor/three/three.module.js" _site/index.html
+          sed -e "s#\./vendor/#./$V/vendor/#g" -e "s#\./src/#./$V/src/#g" builder.html > _site/builder.html
+          grep -q "$V/src/builder/main.js" _site/builder.html
+          grep -q "$V/vendor/leaflet/leaflet.js" _site/builder.html
           touch _site/.nojekyll
       - uses: actions/configure-pages@v6
       - uses: actions/upload-pages-artifact@v5

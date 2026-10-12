@@ -1,0 +1,57 @@
+{
+  "id": "compton-gap-2",
+  "site": "compton-gap",
+  "name": "Compton Gap 2",
+  "seed": 404306,
+  "time_limit_min": 120,
+  "pass_threshold": 3,
+  "preset": "woods",
+  "start": {
+    "x": 1145,
+    "z": 855
+  },
+  "points": [
+    {
+      "code": "A6",
+      "x": 1485,
+      "z": 935
+    },
+    {
+      "code": "H4",
+      "x": 1085,
+      "z": 545
+    },
+    {
+      "code": "E5",
+      "x": 985,
+      "z": 225
+    },
+    {
+      "code": "G1",
+      "x": 655,
+      "z": 465
+    }
+  ],
+  "decoys": [
+    {
+      "code": "X4",
+      "x": 1255,
+      "z": 615
+    },
+    {
+      "code": "V2",
+      "x": 1395,
+      "z": 1065
+    },
+    {
+      "code": "D7",
+      "x": 1025,
+      "z": 385
+    },
+    {
+      "code": "T1",
+      "x": 1185,
+      "z": 225
+    }
+  ]
+}

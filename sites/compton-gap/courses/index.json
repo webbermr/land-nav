@@ -1,0 +1,17 @@
+[
+  {
+    "id": "compton-gap-1",
+    "name": "Compton Gap 1",
+    "file": "compton-gap-1.json"
+  },
+  {
+    "id": "compton-gap-2",
+    "name": "Compton Gap 2",
+    "file": "compton-gap-2.json"
+  },
+  {
+    "id": "compton-gap-night-1",
+    "name": "Compton Gap Night 1",
+    "file": "compton-gap-night-1.json"
+  }
+]

@@ -1,0 +1,58 @@
+{
+  "id": "compton-gap-night-1",
+  "site": "compton-gap",
+  "name": "Compton Gap Night 1",
+  "seed": 26728,
+  "time_limit_min": 150,
+  "pass_threshold": 3,
+  "preset": "woods",
+  "start": {
+    "x": 1145,
+    "z": 855
+  },
+  "points": [
+    {
+      "code": "U9",
+      "x": 1065,
+      "z": 615
+    },
+    {
+      "code": "C9",
+      "x": 895,
+      "z": 535
+    },
+    {
+      "code": "M9",
+      "x": 1025,
+      "z": 445
+    },
+    {
+      "code": "L4",
+      "x": 1205,
+      "z": 235
+    }
+  ],
+  "decoys": [
+    {
+      "code": "T5",
+      "x": 1375,
+      "z": 185
+    },
+    {
+      "code": "Y5",
+      "x": 1285,
+      "z": 485
+    },
+    {
+      "code": "J4",
+      "x": 865,
+      "z": 365
+    },
+    {
+      "code": "S8",
+      "x": 995,
+      "z": 145
+    }
+  ],
+  "night": true
+}

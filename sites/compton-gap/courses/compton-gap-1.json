@@ -1,0 +1,57 @@
+{
+  "id": "compton-gap-1",
+  "site": "compton-gap",
+  "name": "Compton Gap 1",
+  "seed": 875518,
+  "time_limit_min": 120,
+  "pass_threshold": 3,
+  "preset": "woods",
+  "start": {
+    "x": 1145,
+    "z": 855
+  },
+  "points": [
+    {
+      "code": "U8",
+      "x": 1025,
+      "z": 1365
+    },
+    {
+      "code": "D1",
+      "x": 1275,
+      "z": 1875
+    },
+    {
+      "code": "K8",
+      "x": 1315,
+      "z": 1655
+    },
+    {
+      "code": "Q2",
+      "x": 1115,
+      "z": 1165
+    }
+  ],
+  "decoys": [
+    {
+      "code": "V9",
+      "x": 1465,
+      "z": 1535
+    },
+    {
+      "code": "D5",
+      "x": 785,
+      "z": 1355
+    },
+    {
+      "code": "Y9",
+      "x": 1565,
+      "z": 1655
+    },
+    {
+      "code": "M8",
+      "x": 1225,
+      "z": 1315
+    }
+  ]
+}

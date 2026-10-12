@@ -1,0 +1,65 @@
+{
+  "id": "compton-gap",
+  "name": "Compton Gap",
+  "utm_zone": "17N",
+  "epsg": 32617,
+  "mgrs_gzd": "17S",
+  "mgrs_100km": "QD",
+  "center_lat": 38.825551,
+  "center_lon": -78.170729,
+  "e_west": 744610,
+  "n_north": 4302220,
+  "size_m": 2000.0,
+  "spacing_m": 4,
+  "grid": 501,
+  "elev_min": 526.7997436523438,
+  "elev_max": 891.0767822265625,
+  "elev_ref": 526.7997436523438,
+  "skirt": {
+    "size_m": 6000,
+    "spacing_m": 30,
+    "grid": 201,
+    "e_west": 742620,
+    "n_north": 4304220,
+    "elev_min": 254.02711486816406,
+    "elev_max": 889.7926025390625
+  },
+  "declination_deg": -10.07,
+  "convergence_deg": 1.7749,
+  "gm_angle_deg": -11.8449,
+  "declination_date": "2026-10-12",
+  "contour_interval_m": 10,
+  "index_contour_interval_m": 50,
+  "map": {
+    "px": 4096,
+    "area": [
+      323,
+      110,
+      3773,
+      3560
+    ]
+  },
+  "sources": [
+    "USGS 3DEP elevation service",
+    "lidar: VA_NorthernVA_B22",
+    "lidar: VA_NorthernShenandoah_2020_D20",
+    "lidar: VA Shenandoah 2014"
+  ],
+  "default_start": {
+    "name": "Compton Gap",
+    "x": 1145,
+    "z": 855
+  },
+  "features": true,
+  "landcover": {
+    "grid": 201,
+    "spacing_m": 10,
+    "year": 2021,
+    "source": "NLCD 2021 Land Cover and Tree Canopy Cover (USGS, MRLC, USDA Forest Service)",
+    "summary": {
+      "forest": 0.976,
+      "developed": 0.024
+    },
+    "mean_canopy": 0.899
+  }
+}

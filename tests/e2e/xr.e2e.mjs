@@ -794,6 +794,11 @@ await check('VR menu: hold X opens it; the trigger toggles woods, steps the pace
       return { fly: L.fly, y: L.player.position.y, ground: L.terrain.heightAt(h.x, h.z) };
     });
     assert.ok(!r.fly && Math.abs(r.y - r.ground) < 0.01, JSON.stringify(r));
+    // Places tab: save where you stand; it shows up in the first slot.
+    const n0 = await page.evaluate(() => window.__landnav.places.filter((p) => !p.recent).length);
+    await pick('Save this spot');
+    assert.equal(await page.evaluate(() => window.__landnav.places.filter((p) => !p.recent).length), n0 + 1);
+    assert.equal(await page.evaluate(() => window.__landnav.vrMenu.page), 2); // the Places tab
     await pick('Close');
     assert.equal(await page.evaluate(() => window.__landnav.vrMenu.open), false);
   } finally {

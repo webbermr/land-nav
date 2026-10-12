@@ -44,6 +44,10 @@ import { dataUrl } from './data-url.js';
 import { buildInstantSite, instantSiteData, cacheKey, loadCachedSite, saveCachedSite } from './instant-site.js';
 import { loadSkirtAerial, loadFarField, buildFarRing, fetchFarAerial } from './aerial.js';
 import { GROUND_FX } from './ground-fx.js';
+import {
+  sceneToLatLon, latLonToScene, squareStep, neighbourCentre, edgeStep, pushingOut, arrivalOn,
+  loadPlaces, savePlaces, sortPlaces, addPlace, touchRecent, removePlace, spotName,
+} from './travel-logic.js';
 
 const params = new URLSearchParams(location.search);
 // The site comes from ?site=, else the first entry in sites/index.json (see start()).
@@ -358,8 +362,8 @@ const CLICK_MESSAGES = {
   'protractor-miss': 'Right-click on a dot to centre the protractor there.',
 };
 let toast = null;
-function showToast(text) {
-  toast = text ? { text, until: performance.now() + 3500 } : null;
+function showToast(text, ms = 3500) {
+  toast = text ? { text, until: performance.now() + ms } : null;
 }
 
 renderer.domElement.addEventListener('mousedown', (e) => {
@@ -432,8 +436,11 @@ function snapPlayerToGround() {
 
 function updateBoundaryWarning(x, z) {
   const edge = Math.min(x, z, terrain.size - x, terrain.size - z);
+  const onward = siteData && !siteData.site.synthetic && !courseRunning();
   boundaryWarning = edge <= settings.boundaryWarn
-    ? (edge <= 0.01 ? 'Boundary. You cannot go farther.' : 'Approaching the boundary.')
+    ? (edge <= 0.01
+      ? (onward ? 'Edge of this area. Keep going to carry on into the next one.' : 'Boundary. You cannot go farther.')
+      : (onward ? 'Near the edge of this area. The next one is getting ready.' : 'Approaching the boundary.'))
     : '';
 }
 
@@ -519,7 +526,29 @@ function setFly(on) {
   if (!fly && terrain) snapPlayerToGround();
 }
 const step = (key, lo, hi) => (dir) => changeSetting(key, Math.min(hi, Math.max(lo, settings[key] + dir)));
-// Three pages, picked with the tabs along the top.
+// Places: save where you are, go back to a saved place or a recent square. Each
+// slot shows one place; the right half of its box goes there, the left half
+// (pressed twice) forgets it.
+const PLACE_SLOTS = 8;
+const MENU_CLOSE = { label: 'Close', press: () => vrMenu.hide() };
+const placeAt = (i) => sortPlaces(places)[i];
+const placeItems = [
+  { label: 'Save this spot', value: () => 'Save', enabled: () => !!siteData, press: () => saveSpot() },
+  ...Array.from({ length: PLACE_SLOTS }, (_, i) => ({
+    label: () => { const p = placeAt(i); return p ? `${p.name}${p.recent ? ' (recent)' : ''}` : '-'; },
+    value: () => (placeAt(i) ? (removeArmed?.place === placeAt(i) && performance.now() < removeArmed.until ? '‹ remove?' : 'Go ›') : ''),
+    enabled: () => !!placeAt(i) && !traveling,
+    press: (d) => {
+      const p = placeAt(i);
+      if (!p) return;
+      if (d > 0) { removeArmed = null; vrMenu.hide(); goToPlace(p); return; }
+      if (removeArmed?.place === p && performance.now() < removeArmed.until) { removeArmed = null; forgetPlace(p); return; }
+      removeArmed = { place: p, until: performance.now() + 3000 };
+    },
+  })),
+];
+
+// Four pages, picked with the tabs along the top.
 const MENU_PAGES = [
   { title: 'World', items: [
     { label: 'Time of day', value: () => timeOfDayText(), enabled: () => !courseRunning(), repeat: true,
@@ -559,6 +588,7 @@ const MENU_PAGES = [
       press: (d) => changeSetting('vignette', cycle([0, 0.25, 0.5, 0.75, 1], settings.vignette, d)) },
     { label: 'Close', press: () => vrMenu.hide() },
   ] },
+  { title: 'Places', items: [...placeItems, MENU_CLOSE] },
   { title: 'Tools', items: [
     { label: 'Compass lens', value: () => (settings.units === 'mils' ? 'Mils' : 'Degrees'),
       press: () => changeSetting('units', settings.units === 'mils' ? 'deg' : 'mils') },
@@ -763,6 +793,7 @@ function updateDesktop(dt) {
     const floor = terrain.heightAt(player.position.x, player.position.z) + 0.5;
     if (player.position.y < floor) player.position.y = floor;
     boundaryWarning = '';
+    checkTravel(dt, player.position.x, player.position.z, dirX, dirZ);
     courseTick(dt, player.position.x, player.position.z, false);
     return;
   }
@@ -774,6 +805,7 @@ function updateDesktop(dt) {
   player.position.y = terrain.heightAt(player.position.x, player.position.z);
   playFeet(step.feet);
   updateBoundaryWarning(player.position.x, player.position.z);
+  checkTravel(dt, player.position.x, player.position.z, dirX, dirZ);
   courseTick(dt, player.position.x, player.position.z, step.dx !== 0 || step.dz !== 0);
 }
 
@@ -807,6 +839,7 @@ function updateXR(dt) {
     if (player.position.y < floor) player.position.y = floor;
     if (tools) tools.updateXR(dt, xrInput);
     updateXRCourseControls();
+    checkTravel(dt, head.x, head.z, dirX, dirZ);
     courseTick(dt, head.x, head.z, false);
     const turning = turnXR(dt, !!tools?.compass.group.visible);
     const moving = Math.min(1, Math.hypot(stick.x, stick.y) + Math.abs(climb));
@@ -850,6 +883,7 @@ function updateXR(dt) {
   const full = settings.baseSpeed * settings.timeScale;
   vignette.update(settings.vignette * Math.max(Math.min(1, loco.lastSpeed / full), turning), dt);
   updateBoundaryWarning(head.x, head.z);
+  checkTravel(dt, head.x, head.z, dirX * stick.mag, dirZ * stick.mag);
 }
 
 // ---- Courses ----
@@ -1225,10 +1259,8 @@ function buildCoursePanel(index, sites = []) {
     // A site is a whole new world: reload with it.
     sitePick.addEventListener('change', () => {
       if (sitePick.value === siteId) return;
-      const q = new URLSearchParams(location.search);
-      q.set('site', sitePick.value);
-      for (const k of ['course', 'at', 'size', 'name', 'rebuild']) q.delete(k);
-      location.search = q.toString();
+      coursePanel.hidden = true;
+      travelTo({ siteId: sitePick.value }).then((ok) => { if (!ok) sitePick.value = siteId; });
     });
     coursePanel.append(sh, sitePick);
   }
@@ -1294,7 +1326,10 @@ function buildCoursePanel(index, sites = []) {
   const link = Object.assign(document.createElement('a'), { href: 'builder.html', textContent: 'Site builder' });
   link.style.color = '#ffd27a';
   builder.append(link, ': pick any spot in the US and explore it right away, or build a permanent site with courses.');
-  coursePanel.append(h, select, seedRow, nightRow, startBtn, endBtn, reviewBtn, note, builder);
+  const ph = document.createElement('h2');
+  ph.textContent = 'Places';
+  const placesBox = Object.assign(document.createElement('div'), { id: 'places' });
+  coursePanel.append(h, select, seedRow, nightRow, startBtn, endBtn, reviewBtn, note, ph, placesBox, builder);
 }
 
 document.getElementById('course-button').addEventListener('click', () => {
@@ -1364,6 +1399,40 @@ vrButton.addEventListener('click', () => {
 
 // ---- HUD ----
 
+// In the headset the page's HUD can't be seen, so messages (and the edge warning)
+// show on a small card low in front of you.
+const vrNote = (() => {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024; canvas.height = 128;
+  const g = canvas.getContext('2d');
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.64, 0.08),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false, depthWrite: false }));
+  mesh.name = 'vr-note';
+  mesh.renderOrder = 998;
+  mesh.position.set(0, -0.2, -0.9);
+  mesh.visible = false;
+  camera.add(mesh);
+  let last = '';
+  return {
+    mesh,
+    show(text) {
+      mesh.visible = !!text;
+      if (!text || text === last) return;
+      last = text;
+      g.clearRect(0, 0, 1024, 128);
+      g.fillStyle = 'rgba(22, 26, 31, 0.88)';
+      g.beginPath(); g.roundRect(0, 0, 1024, 128, 24); g.fill();
+      g.fillStyle = '#ffd27a';
+      g.font = `600 ${text.length > 60 ? 30 : 38}px system-ui, sans-serif`;
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText(text, 512, 64, 980);
+      tex.needsUpdate = true;
+    },
+  };
+})();
+
 let frames = 0;
 let fpsTime = 0;
 let fps = 0;
@@ -1403,7 +1472,9 @@ function updateHud(dt) {
   if (tools?.desktopMap && !renderer.xr.isPresenting) {
     lines.push('Map: click for a dot, click two dots for a line, right-click a dot for the protractor, wheel to zoom, M to put away.');
   }
-  if (toast && performance.now() < toast.until) lines.push(`> ${toast.text}`);
+  const toastOn = toast && performance.now() < toast.until;
+  if (toastOn) lines.push(`> ${toast.text}`);
+  vrNote.show(renderer.xr.isPresenting ? (toastOn ? toast.text : boundaryWarning) : '');
   hud.textContent = lines.join('\n');
   debugPanel?.update(loco, boundaryWarning, compassDebug());
 }
@@ -1502,82 +1573,91 @@ async function loadSiteIndex() {
   }
 }
 
-// ?at=lat,lon[&size=m][&name=...]: a site built here in the browser (src/instant-site.js),
-// or the copy the browser kept from last time.
-async function loadInstantSite(at) {
-  const [lat, lon] = at.split(',').map(Number);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error(`"at=${at}" should be latitude,longitude`);
-  const size = [1000, 1500, 2000, 3000].includes(Number(params.get('size'))) ? Number(params.get('size')) : 2000;
+// ---- Worlds: a site from sites/, or a square built here in the browser ----
+//
+// A world spec: { siteId } or { lat, lon, size, name }. fetchWorld gets its data;
+// installWorld swaps it in, in place, so you can move between squares without a
+// reload (and without leaving VR).
+
+// The square built here in the browser for a spec, from the browser's copy when it has one.
+const building = new Map(); // cache key -> promise, so a prefetch and a travel share one build
+function buildOrLoad({ lat, lon, size = 2000, name = '', rebuild = false }, onProgress = () => {}) {
   const key = cacheKey(lat, lon, size);
-  let built = params.has('rebuild') ? null : await loadCachedSite(key);
-  if (built && params.get('name')) built.site.name = params.get('name');
-  if (!built) {
-    setStatus('Building this place from USGS, NLCD and OpenStreetMap data (about half a minute) ...');
-    built = await buildInstantSite({ lat, lon, size, name: params.get('name') || '', onProgress: (t) => setStatus(`Building: ${t}`) });
-    saveCachedSite(key, built);
+  if (!rebuild && building.has(key)) return building.get(key);
+  const p = (async () => {
+    let built = rebuild ? null : await loadCachedSite(key);
+    if (!built) {
+      onProgress('Building this place from USGS, NLCD and OpenStreetMap data ...');
+      built = await buildInstantSite({ lat, lon, size, name, onProgress });
+      saveCachedSite(key, built);
+    }
+    if (name) built.site.name = name;
+    return built;
+  })();
+  building.set(key, p);
+  p.catch(() => building.delete(key));
+  return p;
+}
+
+async function fetchWorld(spec, onProgress = () => {}) {
+  if (spec.siteId) {
+    const base = `sites/${encodeURIComponent(spec.siteId)}`;
+    const [data, mapTexture] = await Promise.all([loadSite(base), loadMapTexture(base)]);
+    const features = await loadFeatures(base, data.site);
+    const lc = await loadLandCover(base, data.site);
+    return { spec, base, data, mapTexture, features, landcover: lc, farField: null, courseIndex: await loadCourseIndex(base), instant: false };
   }
+  const built = await buildOrLoad(spec, onProgress);
   const d = instantSiteData(built);
-  const mapTexture = new THREE.CanvasTexture(built.mapCanvas);
-  return { data: d, mapTexture, features: d.features, landcover: d.landcover, farField: d.farField };
+  return {
+    spec: { lat: spec.lat, lon: spec.lon, size: spec.size || 2000, name: built.site.name },
+    base: null, data: d, mapTexture: new THREE.CanvasTexture(built.mapCanvas), features: d.features, landcover: d.landcover,
+    farField: d.farField, courseIndex: [], instant: true,
+  };
 }
 
-// ---- The far view: aerial photographs on distant ground, terrain to the horizon ----
+let worldSpec = null;
+let featureGroup = null;
+let siteList = [];
 
-async function loadFarView(site, farFieldIn) {
-  if (site.synthetic || farRing) return;
-  try {
-    await loadSkirtAerial(site);
-  } catch (err) {
-    console.warn('No aerial photographs:', err.message);
-  }
-  try {
-    let far = site.far, field = farFieldIn;
-    if (!field) ({ far, field } = await loadFarField(site));
-    const tex = await fetchFarAerial(site, far).catch(() => null);
-    farRing = buildFarRing(site, far, field, tex);
-    scene.add(farRing);
-    camera.far = 45000;
-    camera.updateProjectionMatrix();
-  } catch (err) {
-    console.warn('No far terrain:', err.message);
-  }
-  applyFarView();
-}
-function applyFarView() {
-  const on = settings.farView;
-  if (farRing) farRing.visible = on;
-  GROUND_FX.aerialBox.value.w = on && GROUND_FX.aerial.value.image?.width > 1 ? 1 : 0;
-  applyPreset();
+function disposeTree(root) {
+  root?.removeFromParent();
+  root?.traverse((o) => {
+    if (o.geometry) o.geometry.dispose();
+    for (const m of [].concat(o.material || [])) { m.map?.dispose(); m.dispose(); }
+  });
 }
 
-async function start() {
-  const sites = await loadSiteIndex();
-  const at = params.get('at');
-  let instant = null;
-  if (at) {
-    instant = await loadInstantSite(at);
-    siteId = instant.data.site.id;
+// Take the current world out: terrain, trees, roads, tools, far view, course.
+function removeWorld() {
+  run?.dispose();
+  run = null;
+  hideReview();
+  if (terrain) disposeTree(terrain.group);
+  vegetation?.dispose();
+  disposeTree(featureGroup);
+  disposeTree(farRing);
+  farRing = null;
+  GROUND_FX.aerialBox.value.w = 0;
+  if (tools) {
+    tools.map.group.removeFromParent();
+    tools.compass.group.removeFromParent();
+    tools.rayLine.removeFromParent();
   }
-  siteId ||= sites[0]?.id || 'demo-synthetic';
-  if (!instant) setStatus(`Loading site "${siteId}" ...`);
-  const base = `sites/${encodeURIComponent(siteId)}`;
-  const [data, mapTexture] = instant ? [instant.data, instant.mapTexture] : await Promise.all([loadSite(base), loadMapTexture(base)]);
+  if (beacon) { scene.getObjectByName('beacon')?.removeFromParent(); beacon = null; }
+}
+
+function installWorld(w) {
+  removeWorld();
+  const { data, mapTexture, features } = w;
+  worldSpec = w.spec;
+  siteId = data.site.id;
   env.site = data.site;
   env.offsetMin = guessUtcOffsetMin(data.site.center_lon, new Date());
   weatherService = new WeatherService(data.site);
-  // ?weather=<mode>, ?date=YYYY-MM-DD, ?season=<season>: for checks and screenshots.
-  if (WEATHER_MODES.includes(params.get('weather'))) settings.weather = params.get('weather');
-  if (/^\d{4}-\d{2}-\d{2}$/.test(params.get('date') || '')) settings.weatherDate = params.get('date');
-  if (SEASONS.includes(params.get('season'))) settings.season = params.get('season');
-  // ?time=HH:MM puts the sun at that local time (for checks and screenshots).
-  if (/^\d{1,2}:\d{2}$/.test(params.get('time') || '')) {
-    const [hh, mm] = params.get('time').split(':').map(Number);
-    settings.timeOfDay = hh * 60 + mm;
-  }
   mapImage = mapTexture.image;
   lastRun = loadLastRun(data.site.id);
-  const features = instant ? instant.features : await loadFeatures(base, data.site);
-  landcover = instant ? instant.landcover : await loadLandCover(base, data.site);
+  landcover = w.landcover;
   // With land cover data the campground's thinner canopy is already in it.
   featureIndex = features ? new FeatureIndex(features, landcover ? { areaDensity: { campground: 1 } } : {}) : null;
   const vegSeed = hashString(data.site.id);
@@ -1595,7 +1675,7 @@ async function start() {
   });
   applyCanopyRange();
   scene.add(terrain.group);
-  const featureGroup = buildFeatures(features, data.field);
+  featureGroup = buildFeatures(features, data.field);
   scene.add(featureGroup);
   // Shadows: trees and buildings cast them; the ground, roads and buildings take them.
   castShadows(terrain.group, { cast: false, receive: true });
@@ -1603,13 +1683,249 @@ async function start() {
   for (const name of ['roofs', 'walls']) castShadows(featureGroup.getObjectByName(name), { cast: true, receive: true });
   vegetation.castShadows();
   env.setShadows(settings.shadows);
+  const wasMap = tools?.desktopMap, wasCompass = tools?.desktopCompass;
   tools = new Tools({ renderer, camera, site: data.site, mapTexture, settings });
   for (const hand of ['left', 'right']) if (hands[hand].grip) tools.attach(hand, hands[hand]);
-  applyPreset(); // night tint and compass lume for the tools just made
+  if (!renderer.xr.isPresenting && (wasMap || wasCompass)) {
+    tools.desktopMap = !!wasMap; tools.desktopCompass = !!wasCompass;
+    tools.mountDesktop();
+  }
   siteData = data;
-  buildCoursePanel(instant ? [] : await loadCourseIndex(base), instant ? [...sites, { id: siteId, name: `${data.site.name} (built here)` }] : sites);
-  if (settings.farView) loadFarView(data.site, instant?.farField);
+  applyPreset(); // night tint and compass lume for the tools just made
+  buildCoursePanel(w.courseIndex, w.instant ? [...siteList, { id: siteId, name: `${data.site.name} (built here)` }] : siteList);
+  if (settings.farView) loadFarView(data.site, w.farField);
   mountWrist();
+  document.title = `${data.site.name} | Land Nav`;
+  // The address says where you are, so a reload comes back here.
+  const q = new URLSearchParams(location.search);
+  for (const k of ['site', 'at', 'size', 'name', 'course', 'rebuild']) q.delete(k);
+  if (w.instant) {
+    q.set('at', `${w.spec.lat.toFixed(5)},${w.spec.lon.toFixed(5)}`);
+    if (w.spec.size !== 2000) q.set('size', w.spec.size);
+    if (w.spec.name) q.set('name', w.spec.name);
+    places = touchRecent(places, { name: data.site.name, lat: Number(w.spec.lat.toFixed(5)), lon: Number(w.spec.lon.toFixed(5)), size: w.spec.size });
+    savePlaces(storage(), places);
+  } else {
+    q.set('site', siteId);
+  }
+  history.replaceState(null, '', `${location.pathname}?${q}`);
+  refreshPlacesPanel();
+}
+
+// Put the viewer (the head, in VR) at a scene position on the current world, facing yaw.
+function placeViewer(x, z, { yaw = null, alt = null } = {}) {
+  const s = terrain.size;
+  x = Math.min(s, Math.max(0, x)); z = Math.min(s, Math.max(0, z));
+  if (renderer.xr.isPresenting) {
+    camera.getWorldPosition(head);
+    player.position.x += x - head.x;
+    player.position.z += z - head.z;
+    player.position.y = terrain.heightAt(x, z) + (fly && alt ? alt : 0);
+  } else {
+    player.position.set(x, 0, z);
+    if (yaw !== null) input.yaw = yaw;
+    if (fly && alt) player.position.y = terrain.heightAt(x, z) + alt + settings.eyeHeight;
+    else snapPlayerToGround();
+  }
+}
+
+// ---- Travel: to the next square, or to a saved place ----
+
+let traveling = false;
+let travelProgress = '';
+async function travelTo(spec, arrive = null) {
+  if (traveling) return false;
+  if (courseRunning()) { showToast('End the course before going somewhere else.'); return false; }
+  traveling = true;
+  travelProgress = 'Getting the next area ready ...';
+  showToast(travelProgress, 600000);
+  try {
+    const w = await fetchWorld(spec, (t) => { travelProgress = t; showToast(t, 600000); });
+    await new Promise((resolve) => teleporter.jump(() => {
+      installWorld(w);
+      const p = arrive ? arrive(w.data.site) : { x: w.data.site.size_m / 2, z: w.data.site.size_m / 2 };
+      placeViewer(p.x, p.z, p);
+      resolve();
+    }, 0.5));
+    showToast(`${w.data.site.name}.`);
+    return true;
+  } catch (err) {
+    console.error(err);
+    showToast(`Could not go there: ${err.message}`);
+    return false;
+  } finally {
+    traveling = false;
+  }
+}
+
+// Real places only: the synthetic demo has nothing next to it.
+const canTravel = () => siteData && !siteData.site.synthetic && !courseRunning() && !traveling;
+
+function neighbourSpec(i, j) {
+  const c = neighbourCentre(siteData.site, i, j);
+  return { lat: Number(c.lat.toFixed(5)), lon: Number(c.lon.toFixed(5)), size: siteData.site.size_m };
+}
+
+// Walking into an edge (or flying past it) carries on into the next square. The
+// one you're heading for is built in the background as you near the edge.
+const PREFETCH_M = 200;
+let edgePushSec = 0;
+let prefetched = '';
+function checkTravel(dt, x, z, dx, dz) {
+  if (!canTravel()) { edgePushSec = 0; return; }
+  const site = siteData.site, s = terrain.size;
+  const near = edgeStep(s, x, z, PREFETCH_M);
+  if (near.i || near.j) {
+    const spec = neighbourSpec(near.i, near.j);
+    const key = cacheKey(spec.lat, spec.lon, spec.size);
+    if (key !== prefetched) {
+      prefetched = key;
+      buildOrLoad(spec).catch((err) => console.warn('Next square not ready:', err.message));
+    }
+  }
+  const outside = x < -25 || z < -25 || x > s + 25 || z > s + 25;
+  if (pushingOut(s, x, z, dx, dz)) edgePushSec += dt; else edgePushSec = 0;
+  if (!outside && edgePushSec < 0.8) return;
+  edgePushSec = 0;
+  // A step past the edge, the way you were going, says which square is next.
+  const len = Math.hypot(dx, dz) || 1;
+  const px = outside ? x : x + (dx / len) * 3, pz = outside ? z : z + (dz / len) * 3;
+  const { i, j } = squareStep(site, Math.min(s + 1, Math.max(-1, px)), Math.min(s + 1, Math.max(-1, pz)));
+  if (!i && !j) return;
+  const oldSite = site;
+  const alt = fly ? Math.max(0, player.position.y - terrain.heightAt(x, z) - (renderer.xr.isPresenting ? 0 : settings.eyeHeight)) : null;
+  travelTo(neighbourSpec(i, j), (newSite) => ({ ...arrivalOn(oldSite, px, pz, newSite), alt }));
+}
+
+// ---- Saved places ----
+
+let places = loadPlaces(storage());
+let removeArmed = null; // { place, until }: the left half of a place's value box, pressed once
+
+function facingPoint() {
+  const az = facingGridAz() + (siteData.site.convergence_deg ?? 0);
+  return compassPoint(az);
+}
+
+function saveSpot() {
+  if (!siteData) return;
+  const p = currentPos();
+  const ll = sceneToLatLon(siteData.site, p.x, p.z);
+  const yaw = renderer.xr.isPresenting ? Math.atan2(-fwd.x, -fwd.z) : input.yaw;
+  const alt = fly ? Math.max(0, player.position.y - terrain.heightAt(p.x, p.z) - (renderer.xr.isPresenting ? 0 : settings.eyeHeight)) : 0;
+  const count = places.filter((q) => !q.recent).length + 1;
+  const place = {
+    name: spotName(siteData.site.name, count, facingPoint()),
+    site: worldSpec.siteId ? { id: worldSpec.siteId } : { lat: worldSpec.lat, lon: worldSpec.lon, size: worldSpec.size },
+    view: { lat: ll.lat, lon: ll.lon, yaw, alt: alt > 3 ? Math.round(alt) : 0 },
+  };
+  places = addPlace(places, place);
+  savePlaces(storage(), places);
+  refreshPlacesPanel();
+  showToast(`Saved: ${place.name}.`);
+}
+
+function goToPlace(place) {
+  const here = (place.site.id && worldSpec?.siteId === place.site.id)
+    || (!place.site.id && worldSpec && !worldSpec.siteId && worldSpec.lat === place.site.lat && worldSpec.lon === place.site.lon && worldSpec.size === place.site.size);
+  const arrive = (site) => {
+    if (!place.view) return { x: site.size_m / 2, z: site.size_m / 2 };
+    const p = latLonToScene(site, place.view.lat, place.view.lon);
+    return { ...p, yaw: place.view.yaw, alt: place.view.alt || null };
+  };
+  if (place.view?.alt && !fly && !courseRunning()) setFly(true);
+  if (here) {
+    if (courseRunning()) return showToast('Teleport is off during a course.');
+    const p = arrive(siteData.site);
+    teleporter.jump(() => placeViewer(p.x, p.z, p), 0.3);
+    return;
+  }
+  travelTo(place.site.id ? { siteId: place.site.id } : { ...place.site, name: place.recent ? place.name : '' }, arrive);
+}
+
+function forgetPlace(place) {
+  places = removePlace(places, place);
+  savePlaces(storage(), places);
+  refreshPlacesPanel();
+  showToast(`Removed ${place.name}.`);
+}
+
+// The Course panel's list of places (desktop).
+function refreshPlacesPanel() {
+  const box = document.getElementById('places');
+  if (!box) return;
+  box.replaceChildren();
+  const save = Object.assign(document.createElement('button'), { type: 'button', textContent: 'Save this spot' });
+  save.addEventListener('click', saveSpot);
+  box.append(save);
+  for (const p of sortPlaces(places)) {
+    const row = document.createElement('div');
+    row.className = 'place';
+    const go = Object.assign(document.createElement('button'), { type: 'button', className: 'go', textContent: p.recent ? `${p.name} (recent)` : p.name });
+    go.addEventListener('click', () => { coursePanel.hidden = true; goToPlace(p); });
+    const x = Object.assign(document.createElement('button'), { type: 'button', className: 'x', textContent: '✕', title: 'Remove' });
+    x.addEventListener('click', () => forgetPlace(p));
+    row.append(go, x);
+    box.append(row);
+  }
+}
+
+// ---- The far view: aerial photographs on distant ground, terrain to the horizon ----
+
+async function loadFarView(site, farFieldIn) {
+  if (site.synthetic || farRing) return;
+  try {
+    await loadSkirtAerial(site);
+  } catch (err) {
+    console.warn('No aerial photographs:', err.message);
+  }
+  try {
+    let far = site.far, field = farFieldIn;
+    if (!field) ({ far, field } = await loadFarField(site));
+    const tex = await fetchFarAerial(site, far).catch(() => null);
+    if (env.site !== site || farRing) { tex?.dispose(); return; } // moved on while it loaded
+    farRing = buildFarRing(site, far, field, tex);
+    scene.add(farRing);
+    camera.far = 45000;
+    camera.updateProjectionMatrix();
+  } catch (err) {
+    console.warn('No far terrain:', err.message);
+  }
+  applyFarView();
+}
+function applyFarView() {
+  const on = settings.farView;
+  if (farRing) farRing.visible = on;
+  GROUND_FX.aerialBox.value.w = on && GROUND_FX.aerial.value.image?.width > 1 ? 1 : 0;
+  applyPreset();
+}
+
+async function start() {
+  siteList = await loadSiteIndex();
+  // ?weather=<mode>, ?date=YYYY-MM-DD, ?season=<season>: for checks and screenshots.
+  if (WEATHER_MODES.includes(params.get('weather'))) settings.weather = params.get('weather');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(params.get('date') || '')) settings.weatherDate = params.get('date');
+  if (SEASONS.includes(params.get('season'))) settings.season = params.get('season');
+  // ?time=HH:MM puts the sun at that local time (for checks and screenshots).
+  if (/^\d{1,2}:\d{2}$/.test(params.get('time') || '')) {
+    const [hh, mm] = params.get('time').split(':').map(Number);
+    settings.timeOfDay = hh * 60 + mm;
+  }
+  // ?at=lat,lon[&size=m][&name=...]: a square built here in the browser; else ?site=, else the first site.
+  let spec;
+  const at = params.get('at');
+  if (at) {
+    const [lat, lon] = at.split(',').map(Number);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error(`"at=${at}" should be latitude,longitude`);
+    const size = [1000, 1500, 2000, 3000].includes(Number(params.get('size'))) ? Number(params.get('size')) : 2000;
+    spec = { lat, lon, size, name: params.get('name') || '', rebuild: params.has('rebuild') };
+  } else {
+    spec = { siteId: siteId || siteList[0]?.id || 'demo-synthetic' };
+    setStatus(`Loading site "${spec.siteId}" ...`);
+  }
+  const w = await fetchWorld(spec, (t) => setStatus(`Building: ${t}`));
+  installWorld(w);
+  const data = w.data;
   if (debug && params.get('beacon')) {
     const [bx, bz] = params.get('beacon').split(',').map(Number);
     if (Number.isFinite(bx) && Number.isFinite(bz)) {
@@ -1617,7 +1933,6 @@ async function start() {
       scene.add(makeBeacon(bx, bz));
     }
   }
-  document.title = `${data.site.name} | Land Nav`;
 
   // Start on the ground in the middle of the area, facing grid north, until a
   // course puts you at its start.
@@ -1652,7 +1967,12 @@ async function start() {
 
   // Exposed for automated checks and console poking. Not a gameplay API.
   window.__landnav = {
-    camera, player, terrain, site: data.site, field: data.field, renderer, scene, settings, loco, input, tools, beacon, wrist, startCourse, vegetation, featureIndex, landcover, collide,
+    camera, player, renderer, scene, settings, loco, input, wrist, startCourse, collide,
+    // The world changes when you travel, so these are looked up each time.
+    get terrain() { return terrain; }, get site() { return siteData.site; }, get field() { return siteData.field; },
+    get tools() { return tools; }, get beacon() { return beacon; }, get vegetation() { return vegetation; },
+    get featureIndex() { return featureIndex; }, get landcover() { return landcover; },
+    travelTo, saveSpot, goToPlace, get places() { return places; }, get traveling() { return traveling; },
     get run() { return run; },
     get lastRun() { return lastRun; },
     get xrJog() { return xrJog; },
@@ -1668,10 +1988,10 @@ async function start() {
   // to run it at night.
   const want = params.get('course');
   if (want) {
-    const index = instant ? [] : await loadCourseIndex(base);
+    const index = w.courseIndex;
     const listed = index.find((c) => c.id === want);
     const opts = { night: params.has('night') };
-    if (listed) await startCourse(await loadCourse(base, listed.file), opts);
+    if (listed) await startCourse(await loadCourse(w.base, listed.file), opts);
     else if (want.startsWith('gen:')) await startCourse(generateCourse(data.site, data.field, Number(want.slice(4)) || 1, genOptions()), opts);
     else showToast(`No course "${want}" for this site.`);
   }

@@ -458,6 +458,18 @@ export class Vegetation {
     this.leaves.emissive.setHex(0x0e1609).multiplyScalar(Math.max(0, Math.min(1, k)));
   }
 
+  // Take the trees out of the scene and free their GPU memory (moving to another square).
+  dispose() {
+    this.group.removeFromParent();
+    this.group.traverse((o) => {
+      if (!o.isMesh) return;
+      o.geometry.dispose();
+      for (const m of [].concat(o.material)) { m.map?.dispose(); m.dispose(); }
+    });
+    this.treeCache.clear();
+    this.clutterCache.clear();
+  }
+
   // Instances drawn, for the HUD and tests.
   get stats() {
     const near = Object.values(this.trees).reduce((s, t) => s + t.trunk.count, 0);

@@ -59,7 +59,7 @@ export function createVrMenu(pages, { title = 'Menu', hint = '' } = {}) {
       if (hover?.row === i && on) { g.fillStyle = 'rgba(255, 210, 122, 0.16)'; g.fillRect(8, y + 3, W - 16, ROW - 6); }
       g.fillStyle = on ? '#e9ecef' : '#6c757d';
       g.font = '34px system-ui, sans-serif';
-      g.fillText(it.label, PAD, y + ROW / 2, W * VALUE_X0 - PAD * 2);
+      g.fillText(typeof it.label === 'function' ? it.label() : it.label, PAD, y + ROW / 2, W * VALUE_X0 - PAD * 2);
       const v = it.value?.();
       if (v === undefined) return;
       const x0 = W * VALUE_X0, x1 = W * VALUE_X1;

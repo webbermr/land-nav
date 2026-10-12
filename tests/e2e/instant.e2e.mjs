@@ -122,12 +122,90 @@ await check('a random course on the built site', async () => {
 });
 
 await check('the browser keeps it: a reload builds nothing', async () => {
+  // The copy is written in the background (the map is encoded as a PNG first).
+  await page.waitForFunction(() => new Promise((resolve) => {
+    const req = indexedDB.open('land-nav-sites', 1);
+    req.onsuccess = () => {
+      const r = req.result.transaction('sites').objectStore('sites').count();
+      r.onsuccess = () => { req.result.close(); resolve(r.result > 0); };
+      r.onerror = () => resolve(false);
+    };
+    req.onerror = () => resolve(false);
+  }), null, { timeout: 30000, polling: 500 });
   const before = { ...counts };
   await page.reload({ waitUntil: 'load' });
   await page.waitForFunction(() => window.__landnav?.tools, null, { timeout: 60000 });
   assert.equal(counts.osm, before.osm);
   assert.equal(counts.wcs, before.wcs);
   assert.equal(await page.evaluate(() => window.__landnav.site.name), 'Test Hill');
+});
+
+await check('walking into the east edge carries on into the next square', async () => {
+  const before = await page.evaluate(() => {
+    const l = window.__landnav;
+    if (l.run && l.run.state !== 'ended') l.run.end(l.run.course.start);
+    l.hideReview();
+    l.player.position.set(l.site.size_m - 0.3, 0, 1000);
+    l.input.yaw = -Math.PI / 2; // facing east
+    return { e: l.site.e_west, n: l.site.n_north };
+  });
+  await page.keyboard.down('KeyW');
+  try {
+    await page.waitForFunction((e) => window.__landnav.site.e_west !== e && !window.__landnav.traveling, before.e, { timeout: 60000, polling: 200 });
+  } finally {
+    await page.keyboard.up('KeyW');
+  }
+  const after = await page.evaluate(() => {
+    const l = window.__landnav;
+    return { e: l.site.e_west, n: l.site.n_north, x: l.player.position.x, z: l.player.position.z, url: location.search, ground: l.terrain.heightAt(l.player.position.x, l.player.position.z) };
+  });
+  assert.equal(after.e - before.e, 2000, JSON.stringify({ before, after }));
+  assert.equal(after.n, before.n);
+  assert.ok(after.x < 10 && Math.abs(after.z - 1000) < 2, JSON.stringify(after));
+  assert.match(after.url, /at=38\.55/);
+});
+
+await check('saved places: save this spot (Course panel), walk back west, then go to the saved spot', async () => {
+  await page.evaluate(() => { window.__landnav.player.position.set(40, 0, 900); });
+  await page.click('#course-button');
+  await page.getByRole('button', { name: 'Save this spot' }).click();
+  const saved = await page.evaluate(() => window.__landnav.places.filter((p) => !p.recent).length);
+  assert.equal(saved, 1);
+  const east = await page.evaluate(() => window.__landnav.site.e_west);
+  // Back west, by walking.
+  await page.evaluate(() => { const l = window.__landnav; l.player.position.set(0.3, 0, 900); l.input.yaw = Math.PI / 2; });
+  await page.keyboard.down('KeyW');
+  try {
+    await page.waitForFunction((e) => window.__landnav.site.e_west === e - 2000 && !window.__landnav.traveling, east, { timeout: 60000, polling: 200 });
+  } finally {
+    await page.keyboard.up('KeyW');
+  }
+  // The places list now has the saved spot and both squares as recent ones.
+  const names = await page.evaluate(() => [...document.querySelectorAll('#places .go')].map((b) => b.textContent));
+  assert.ok(names.length >= 3 && /spot 1/.test(names[0]), names.join(' | '));
+  if (await page.evaluate(() => document.getElementById('course').hidden)) await page.click('#course-button');
+  await page.locator('#places .go').first().click();
+  await page.waitForFunction((e) => window.__landnav.site.e_west === e && !window.__landnav.traveling, east, { timeout: 60000, polling: 200 });
+  await page.waitForTimeout(500);
+  const p = await page.evaluate(() => ({ x: window.__landnav.player.position.x, z: window.__landnav.player.position.z }));
+  assert.ok(Math.abs(p.x - 40) < 1 && Math.abs(p.z - 900) < 1, JSON.stringify(p));
+});
+
+await check('no travel during a course: the edge holds', async () => {
+  const e = await page.evaluate(async () => {
+    const src = (f) => new URL(f, document.querySelector('script[type=module][src]').src).href;
+    const { generateCourse } = await import(src('course-logic.js'));
+    const l = window.__landnav;
+    await l.startCourse(generateCourse(l.site, l.field, 3, {}));
+    l.player.position.set(l.site.size_m - 0.3, 0, 1000);
+    l.input.yaw = -Math.PI / 2;
+    return l.site.e_west;
+  });
+  await page.keyboard.down('KeyW');
+  await page.waitForTimeout(2500);
+  await page.keyboard.up('KeyW');
+  assert.equal(await page.evaluate(() => window.__landnav.site.e_west), e);
+  assert.equal(await page.evaluate(() => window.__landnav.traveling), false);
 });
 
 await check('no page errors', async () => {

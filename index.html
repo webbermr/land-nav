@@ -40,6 +40,11 @@
     #course .row[hidden] { display: none; }
     #course button { margin: 6px 6px 0 0; padding: 7px 12px; }
     #course .note { color: #aaa; font-size: 12px; margin: 10px 0 0; }
+    #course { max-height: calc(100vh - 96px); overflow-y: auto; }
+    #course h2 + #places, #course #places { margin-bottom: 4px; }
+    #course .place { display: flex; gap: 4px; margin-top: 4px; }
+    #course .place .go { flex: 1; margin: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #course .place .x { margin: 0; padding: 7px 9px; }
     #review { position: fixed; inset: 0; background: rgba(12, 14, 17, 0.94); display: flex; flex-direction: column;
       align-items: center; padding: 10px; box-sizing: border-box; gap: 8px; z-index: 5; }
     #review[hidden] { display: none; }
@@ -102,7 +107,7 @@
       <tr><td>Right stick press</td><td>Map: ruler along the last line</td></tr>
       <tr><td>Right trigger</td><td>Course (map down): punch a stake within 2 m</td></tr>
       <tr><td>A</td><td>Slide a pace bead. Hold: reset</td></tr>
-      <tr><td>X</td><td>Score card (exploring: info card). Hold: menu with World, Moving and Tools tabs</td></tr>
+      <tr><td>X</td><td>Score card (exploring: info card). Hold: menu with World, Moving, Places and Tools tabs</td></tr>
       <tr><td>Y</td><td>Next score-card row. Hold: end the course</td></tr>
       <tr><td>Left stick press</td><td>Tap: jog (until you stop). Hold: lost? Show your position for 15 s (counted)</td></tr>
       <tr><td>Left trigger</td><td>At night: red headlamp on / off</td></tr>

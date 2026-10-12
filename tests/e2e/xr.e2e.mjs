@@ -584,23 +584,22 @@ await check('Weather: live (Open-Meteo, mocked) rains; a replayed winter day sno
   const set = (k, v) => page.evaluate(([k, v]) => { const l = window.__landnav; l.settings[k] = v; l.applyPreset(); }, [k, v]);
   try {
     await set('weather', 'live');
-    await page.waitForFunction(() => window.__landnav.weather.now.label === 'Rain', null, { timeout: 10000 });
-    await page.waitForTimeout(700);
+    // Wait for what the frame draws, not a fixed time: a slow runner can take
+    // seconds over a frame that recompiles shaders.
+    await page.waitForFunction(() => { const l = window.__landnav; return l.weather.now.label === 'Rain' && l.scene.getObjectByName('rain').visible; }, null, { timeout: 15000 });
     let s = await state();
     assert.ok(s.source === 'live' && s.rain && !s.snow && s.wet > 0.5 && s.far <= 2500, JSON.stringify(s));
     await page.evaluate(() => { window.__landnav.settings.season = 'auto'; });
     await page.evaluate(() => { window.__landnav.settings.weatherDate = '2021-02-01'; });
     await set('weather', 'replay');
-    await page.waitForFunction(() => window.__landnav.weather.now.label === 'Snow', null, { timeout: 10000 });
-    await page.waitForTimeout(700);
+    await page.waitForFunction(() => { const l = window.__landnav; return l.weather.now.label === 'Snow' && l.scene.getObjectByName('snow').visible && !l.scene.getObjectByName('rain').visible; }, null, { timeout: 15000 });
     s = await state();
     assert.ok(s.year === 2021 && s.snow && !s.rain && s.cover === 1 && s.leaf === 0, JSON.stringify(s));
     // Walk a little so the trees are redrawn for winter.
     await page.evaluate(() => { window.__landnav.vegetation.last = null; });
-    await page.waitForTimeout(300);
-    assert.ok((await state()).bare > 0, 'bare hardwoods drawn');
+    await page.waitForFunction(() => window.__landnav.vegetation.stats.bare > 0, null, { timeout: 15000 });
     await set('weather', 'fog');
-    await page.waitForTimeout(700);
+    await page.waitForFunction(() => !window.__landnav.scene.getObjectByName('snow').visible, null, { timeout: 15000 });
     s = await state();
     assert.ok(s.far <= 130 && !s.snow && s.label === 'Fog', JSON.stringify(s));
   } finally {

@@ -73,6 +73,33 @@ function saplingParts() {
   return { trunk, crown };
 }
 
+// A hardwood in winter: the same trunk with its limbs and twigs bare.
+function bareParts(height = 13, crownY = 15, spread = 1) {
+  let seed = 7;
+  const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 4294967296);
+  const parts = [];
+  for (let i = 0; i < 7; i++) {
+    const a = (i / 7) * Math.PI * 2 + rnd() * 0.5;
+    const tilt = 0.5 + rnd() * 0.35;
+    const len = (3.2 + rnd() * 1.6) * spread;
+    const y0 = height * (0.72 + rnd() * 0.18);
+    const limb = new THREE.CylinderGeometry(0.04, 0.12, len, 5).translate(0, len / 2, 0)
+      .rotateZ(-tilt).rotateY(a).translate(0, y0, 0);
+    parts.push(colored(limb, 0x6f6152));
+    // Two twigs off the end of each limb.
+    const ex = Math.sin(tilt) * len, ey = Math.cos(tilt) * len;
+    for (let k = 0; k < 2; k++) {
+      const tl = 1.6 * spread;
+      const twig = new THREE.CylinderGeometry(0.015, 0.04, tl, 4).translate(0, tl / 2, 0)
+        .rotateZ(-(tilt + (k ? 0.5 : -0.4))).rotateY(a + (k ? 0.5 : -0.5)).translate(Math.cos(a) * ex, y0 + ey, -Math.sin(a) * ex);
+      parts.push(colored(twig, 0x6f6152));
+    }
+  }
+  const leader = new THREE.CylinderGeometry(0.03, 0.12, crownY + 3 - height, 5).translate(0, height + (crownY + 3 - height) / 2, 0);
+  parts.push(colored(leader, 0x6f6152));
+  return merge(parts);
+}
+
 // Crossed-quad cut-out for distant trees, drawn onto a canvas.
 function cutoutTexture(kind) {
   const c = document.createElement('canvas');
@@ -80,9 +107,23 @@ function cutoutTexture(kind) {
   const g = c.getContext('2d');
   g.clearRect(0, 0, 128, 256);
   g.fillStyle = '#5b5046';
-  g.fillRect(58, 120, 12, 136);
+  if (kind !== 'bare') g.fillRect(58, 120, 12, 136);
   g.fillStyle = '#ffffff';
-  if (kind === 'conifer') {
+  if (kind === 'bare') {
+    // Bare branches: a trunk forking upward into twigs.
+    g.strokeStyle = '#ffffff';
+    g.lineCap = 'round';
+    let seed = 3;
+    const rnd = () => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 4294967296);
+    const branch = (x, y, a, len, w, depth) => {
+      const x2 = x + Math.sin(a) * len, y2 = y - Math.cos(a) * len;
+      g.lineWidth = w;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x2, y2); g.stroke();
+      if (depth === 0) return;
+      for (const da of [-0.45 - rnd() * 0.3, 0.4 + rnd() * 0.3]) branch(x2, y2, a + da, len * (0.68 + rnd() * 0.12), w * 0.62, depth - 1);
+    };
+    branch(64, 256, 0, 95, 10, 6);
+  } else if (kind === 'conifer') {
     g.beginPath(); g.moveTo(64, 6); g.lineTo(118, 200); g.lineTo(10, 200); g.closePath(); g.fill();
   } else {
     for (const [x, y, r] of [[64, 70, 52], [34, 104, 34], [94, 100, 36], [64, 128, 40], [48, 48, 30], [84, 46, 30]]) {
@@ -114,16 +155,50 @@ function cutoutGeometry(height) {
   return out;
 }
 
-// Leaf colours: mostly summer greens with a few early-autumn yellows and russets.
-const LEAF = [0x4b6a2b, 0x57742f, 0x3f5f27, 0x6a7a2e, 0x8a8a2c, 0x9a6b28].map((h) => new THREE.Color(h));
+// Leaf colours by season (weather-logic.js phenology): summer greens, the fresh
+// yellow-green of spring, and autumn's yellows, oranges, reds and browns.
+const SUMMER = [0x4b6a2b, 0x57742f, 0x3f5f27, 0x6a7a2e].map((h) => new THREE.Color(h));
+const SPRING = [0x7d9a3a, 0x8aa446, 0x6c8f34].map((h) => new THREE.Color(h));
+const AUTUMN = [0xc39a2c, 0xc77a22, 0xb4501f, 0x93361c, 0x8a6a2c, 0xa8902e].map((h) => new THREE.Color(h));
 const NEEDLE = [0x2f4a2a, 0x355230, 0x2b4426].map((h) => new THREE.Color(h));
 const SHRUB = [0x4d6a2c, 0x5a7333, 0x6c7a35].map((h) => new THREE.Color(h));
+const SHRUB_DORMANT = [0x6a5b44, 0x75664a, 0x5f5340].map((h) => new THREE.Color(h));
+const BARE_FAR = new THREE.Color(0x6a5f55);
+const frac = (v) => v - Math.floor(v);
+const pickFrom = (set, t) => set[Math.min(set.length - 1, Math.floor(t * set.length))];
 
-function leafColor(species, tint, out) {
-  const set = species === 'conifer' ? NEEDLE : LEAF;
-  // Autumn colours only on a minority of hardwoods.
-  const pick = species === 'conifer' ? Math.floor(tint * set.length) : tint < 0.82 ? Math.floor((tint / 0.82) * 4) : 4 + Math.floor(((tint - 0.82) / 0.18) * 2);
-  return out.copy(set[Math.min(set.length - 1, pick)]);
+// phen: { leaf, autumn, spring }. Each tree turns (and drops its leaves) at its own
+// moment, decided by its tint, so the woods change gradually.
+function leafColor(species, tint, out, phen) {
+  if (species === 'conifer') return out.copy(pickFrom(NEEDLE, tint));
+  if (phen.spring > 0 && frac(tint * 5.3) < phen.spring) return out.copy(pickFrom(SPRING, frac(tint * 11.1)));
+  if (frac(tint * 2.9) < phen.autumn) return out.copy(pickFrom(AUTUMN, frac(tint * 7.7)));
+  return out.copy(pickFrom(SUMMER, tint));
+}
+
+// Has this hardwood lost its leaves yet?
+const isBare = (species, tint, phen) => species !== 'conifer' && frac(tint * 3.7) >= phen.leaf;
+
+// Wind: every tree material bends its top with the same gusts (src/weather.js
+// sets the strength). Higher up moves more; each tree has its own phase.
+export const SWAY = { time: { value: 0 }, amp: { value: 0.15 } };
+function swaying(material) {
+  material.onBeforeCompile = (sh) => {
+    sh.uniforms.swayTime = SWAY.time;
+    sh.uniforms.swayAmp = SWAY.amp;
+    sh.vertexShader = 'uniform float swayTime;\nuniform float swayAmp;\n' + sh.vertexShader.replace('#include <begin_vertex>', `#include <begin_vertex>
+  {
+  #ifdef USE_INSTANCING
+    float ph = instanceMatrix[3].x * 0.37 + instanceMatrix[3].z * 0.29;
+  #else
+    float ph = 0.0;
+  #endif
+    float s = swayAmp * max(0.0, transformed.y - 4.0) * 0.022 * (sin(swayTime * 1.3 + ph) + 0.4 * sin(swayTime * 3.1 + ph * 1.7));
+    transformed.x += s;
+    transformed.z += s * 0.6;
+  }`);
+  };
+  return material;
 }
 
 function instanced(geo, mat, capacity, withColor) {
@@ -158,15 +233,17 @@ export class Vegetation {
     this.treeCache = new Map();
     this.clutterCache = new Map();
     this.last = null;
+    this.visibility = 0; // metres you can see in this weather (0: no limit)
     this.group = new THREE.Group();
     this.group.name = 'vegetation';
     scene.add(this.group);
 
-    const bark = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const bark = swaying(new THREE.MeshLambertMaterial({ vertexColors: true }));
+    this.phen = { leaf: 1, autumn: 0, spring: 0 };
     // Two-sided: from under the canopy you see the inside of crowns and cones.
     // A touch of emissive stands in for light scattered through leaves, so shaded
     // undersides read as dark green, not black.
-    const leaves = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide, emissive: 0x0e1609 });
+    const leaves = swaying(new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true, side: THREE.DoubleSide, emissive: 0x0e1609 }));
     this.leaves = leaves;
     const parts = { oak: oakParts(), conifer: coniferParts(), sapling: saplingParts() };
     const CAP = 2500;
@@ -175,12 +252,17 @@ export class Vegetation {
       this.trees[k] = { trunk: instanced(p.trunk, bark, CAP, false), crown: instanced(p.crown, leaves, CAP, true) };
       this.group.add(this.trees[k].trunk, this.trees[k].crown);
     }
-    const cutMat = (kind) => new THREE.MeshBasicMaterial({ map: cutoutTexture(kind), alphaTest: 0.5, side: THREE.DoubleSide, color: 0xc8c8c8 });
+    // Bare limbs for hardwoods out of leaf.
+    this.trees.oak.bare = instanced(bareParts(), bark, CAP, false);
+    this.trees.sapling.bare = instanced(bareParts(3.2, 4.2, 0.35), bark, CAP, false);
+    this.group.add(this.trees.oak.bare, this.trees.sapling.bare);
+    const cutMat = (kind) => swaying(new THREE.MeshBasicMaterial({ map: cutoutTexture(kind), alphaTest: 0.5, side: THREE.DoubleSide, color: 0xc8c8c8 }));
     this.cutouts = {
       broad: instanced(cutoutGeometry(18), cutMat('broad'), 9000, true),
       conifer: instanced(cutoutGeometry(18), cutMat('conifer'), 9000, true),
+      bare: instanced(cutoutGeometry(18), cutMat('bare'), 9000, true),
     };
-    this.group.add(this.cutouts.broad, this.cutouts.conifer);
+    this.group.add(this.cutouts.broad, this.cutouts.conifer, this.cutouts.bare);
 
     const flat = new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true });
     this.clutter = {
@@ -246,6 +328,8 @@ export class Vegetation {
     // In the woods or at night, nothing past the fog can be seen anyway.
     let far = this.settings.preset === 'woods' ? Math.min(q.far, this.settings.woodsVisibility + 10) : q.far;
     if (this.settings.night) far = Math.min(far, this.settings.nightVisibility + 10);
+    // Fog, rain or snow: nothing past what you can see.
+    if (this.visibility) far = Math.min(far, this.visibility + 10);
     const counts = new Map();
     const put = (mesh, t, scale, yaw, color) => {
       const i = counts.get(mesh) ?? 0;
@@ -258,7 +342,8 @@ export class Vegetation {
       counts.set(mesh, i + 1);
     };
 
-    const all = [...Object.values(this.trees).flatMap((t) => [t.trunk, t.crown]), ...Object.values(this.cutouts), ...Object.values(this.clutter)];
+    const all = [...Object.values(this.trees).flatMap((t) => [t.trunk, t.crown, t.bare].filter(Boolean)), ...Object.values(this.cutouts), ...Object.values(this.clutter)];
+    const phen = this.phen;
     if (far > 0) {
       const t0x = Math.floor((x - far) / TILE_M), t1x = Math.floor((x + far) / TILE_M);
       const t0z = Math.floor((z - far) / TILE_M), t1z = Math.floor((z + far) / TILE_M);
@@ -268,12 +353,15 @@ export class Vegetation {
           for (const t of this.tile(this.treeCache, tx, tz, tileTrees)) {
             const d2 = (t.x - x) ** 2 + (t.z - z) ** 2;
             if (d2 > far2) continue;
-            leafColor(t.species, t.tint, this._c);
+            const bare = isBare(t.species, t.tint, phen);
+            if (bare) this._c.copy(BARE_FAR);
+            else leafColor(t.species, t.tint, this._c, phen);
             if (d2 <= near2) {
               put(this.trees[t.species].trunk, t, t.scale, t.rot);
-              put(this.trees[t.species].crown, t, t.scale, t.rot, this._c);
+              if (bare) put(this.trees[t.species].bare, t, t.scale, t.rot);
+              else put(this.trees[t.species].crown, t, t.scale, t.rot, this._c);
             } else if (t.species !== 'sapling') {
-              put(t.species === 'conifer' ? this.cutouts.conifer : this.cutouts.broad, t, t.scale, t.rot, this._c);
+              put(t.species === 'conifer' ? this.cutouts.conifer : bare ? this.cutouts.bare : this.cutouts.broad, t, t.scale, t.rot, this._c);
             }
           }
         }
@@ -285,7 +373,8 @@ export class Vegetation {
         for (let tz = c0z; tz <= c1z; tz++) {
           for (const c of this.tile(this.clutterCache, tx, tz, tileClutter)) {
             if ((c.x - x) ** 2 + (c.z - z) ** 2 > cr2) continue;
-            const col = c.kind === 'shrub' ? this._c.copy(SHRUB[Math.floor(c.tint * SHRUB.length)]) : this._c.setScalar(0.85 + 0.3 * c.tint);
+            const shrubs = phen.leaf < 0.5 ? SHRUB_DORMANT : SHRUB;
+            const col = c.kind === 'shrub' ? this._c.copy(pickFrom(shrubs, c.tint)) : this._c.setScalar(0.85 + 0.3 * c.tint);
             put(this.clutter[c.kind], c, c.scale, c.rot, col);
           }
         }
@@ -328,16 +417,53 @@ export class Vegetation {
   // At night the leaves lose their scattered-light glow, and the flat far-tree
   // cut-outs (unlit) go to silhouettes.
   setNight(on) {
+    this.nightOn = on;
     this.leaves.emissive.setHex(on ? 0x000000 : 0x0e1609);
     for (const m of Object.values(this.cutouts)) m.material.color.setHex(on ? 0x0a0c10 : 0xc8c8c8);
     this.last = null;
   }
 
+  // Near trees, logs and rocks cast shadows; far cut-outs and shrubs don't (too
+  // many, too far, too small to matter).
+  castShadows() {
+    for (const t of Object.values(this.trees)) {
+      t.trunk.castShadow = t.crown.castShadow = true;
+      if (t.bare) t.bare.castShadow = true;
+    }
+    this.clutter.log.castShadow = this.clutter.rock.castShadow = true;
+  }
+
+  // How far the weather lets you see (metres, 0 for no limit).
+  setVisibility(m) {
+    const v = m > 0 && m < 2000 ? Math.round(m / 10) * 10 : 0;
+    if (v === this.visibility) return;
+    this.visibility = v;
+    this.last = null;
+  }
+
+  // The season's leaves: phen from weather-logic.js phenology(). Redraws the trees.
+  setSeason(phen) {
+    const p = this.phen;
+    if (Math.abs(p.leaf - phen.leaf) < 0.01 && Math.abs(p.autumn - phen.autumn) < 0.01 && Math.abs(p.spring - phen.spring) < 0.01) return;
+    this.phen = { ...phen };
+    this.last = null;
+  }
+
+  // Daylight 0..1 (dusk, overcast): the unlit far cut-outs and the leaves' glow
+  // follow it, so far trees don't stay noon-bright at sunset.
+  setLight(k) {
+    if (this.nightOn) return;
+    const v = Math.round(0x0a + (0xc8 - 0x0a) * Math.max(0, Math.min(1, k)));
+    for (const m of Object.values(this.cutouts)) m.material.color.setRGB(v / 255, v / 255, v / 255, THREE.SRGBColorSpace);
+    this.leaves.emissive.setHex(0x0e1609).multiplyScalar(Math.max(0, Math.min(1, k)));
+  }
+
   // Instances drawn, for the HUD and tests.
   get stats() {
     const near = Object.values(this.trees).reduce((s, t) => s + t.trunk.count, 0);
-    const cut = this.cutouts.broad.count + this.cutouts.conifer.count;
+    const bare = this.trees.oak.bare.count + this.trees.sapling.bare.count;
+    const cut = this.cutouts.broad.count + this.cutouts.conifer.count + this.cutouts.bare.count;
     const clutter = Object.values(this.clutter).reduce((s, m) => s + m.count, 0);
-    return { near, cut, clutter };
+    return { near, cut, clutter, bare };
   }
 }

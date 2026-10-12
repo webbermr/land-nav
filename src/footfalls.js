@@ -27,26 +27,42 @@ export class Footfalls {
     }
   }
 
+  // How each surface sounds underfoot: filter, centre frequency, length (s), level.
+  // Hard surfaces click, litter crunches, grass and snow are soft.
+  static SURFACES = {
+    road: { type: 'bandpass', f: 1900, q: 1.2, len: 0.07, vol: 0.9 },
+    parking: { type: 'bandpass', f: 1900, q: 1.2, len: 0.07, vol: 0.9 },
+    track: { type: 'bandpass', f: 1400, q: 0.8, len: 0.11, vol: 1 },
+    trail: { type: 'lowpass', f: 1000, q: 0.7, len: 0.12, vol: 0.9 },
+    litter: { type: 'bandpass', f: 2600, q: 0.6, len: 0.14, vol: 0.85 },
+    grass: { type: 'lowpass', f: 750, q: 0.7, len: 0.13, vol: 0.8 },
+    snow: { type: 'bandpass', f: 1100, q: 1.6, len: 0.2, vol: 0.9 },
+    stream: { type: 'highpass', f: 900, q: 0.5, len: 0.25, vol: 1 },
+    mud: { type: 'lowpass', f: 500, q: 1.4, len: 0.18, vol: 0.9 },
+  };
+
   // foot: 'left' | 'right'. haptics: optional (foot) => void for the XR controller.
-  play(foot, haptics) {
+  // surface: a key of SURFACES (default grass).
+  play(foot, haptics, surface = 'grass') {
     const left = foot === 'left';
     if (left) haptics?.('left', this.settings.hapticStrength, this.settings.hapticMs);
-    const vol = this.settings.footfallVolume * (left ? 1 : 0.55);
+    const sf = Footfalls.SURFACES[surface] || Footfalls.SURFACES.grass;
+    const vol = this.settings.footfallVolume * (left ? 1 : 0.55) * sf.vol;
     if (!this.ctx || vol <= 0 || this.ctx.state !== 'running') return;
     const t = this.ctx.currentTime;
     const src = this.ctx.createBufferSource();
     src.buffer = this.noise;
     // A different slice of noise each time so steps don't sound identical.
-    const offset = Math.random() * 0.15;
+    const offset = Math.random() * 0.05;
     const filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = (left ? 700 : 850) + Math.random() * 250;
-    filter.Q.value = 0.7;
+    filter.type = sf.type;
+    filter.frequency.value = sf.f * (left ? 0.92 : 1.08) * (0.85 + Math.random() * 0.3);
+    filter.Q.value = sf.q;
     const gain = this.ctx.createGain();
     gain.gain.setValueAtTime(0.0001, t);
     gain.gain.exponentialRampToValueAtTime(vol, t + 0.008);
-    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.13);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + sf.len);
     src.connect(filter).connect(gain).connect(this.ctx.destination);
-    src.start(t, offset, 0.15);
+    src.start(t, offset, sf.len + 0.02);
   }
 }

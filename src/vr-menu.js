@@ -3,6 +3,7 @@
 // with the right controller and pull the trigger. A panel floating in front of
 // you, drawn on a canvas, so it costs one draw call.
 //
+// Pages: [{ title, items }], shown one at a time with tabs along the top.
 // Items: { label, value() -> string, press(dir) where dir is -1 (left half of
 // the value box) or +1 (right half), enabled?() -> bool, repeat?: true }
 import * as THREE from 'three';
@@ -12,9 +13,14 @@ const PANEL_W = 0.56; // metres
 const VALUE_X0 = 0.56; // value box, as a fraction of the width
 const VALUE_X1 = 0.97;
 
-export function createVrMenu(items, { title = 'Menu', hint = '' } = {}) {
-  const rows = items.length;
-  const H = HEADER + rows * ROW + 64;
+export function createVrMenu(pages, { title = 'Menu', hint = '' } = {}) {
+  if (!pages[0]?.items) pages = [{ title, items: pages }];
+  let page = 0;
+  let items = pages[0].items;
+  const tabs = pages.length > 1;
+  const TOP = HEADER + (tabs ? ROW + 8 : 0); // first item row
+  const rows = Math.max(...pages.map((p) => p.items.length));
+  const H = TOP + rows * ROW + 64;
   const canvas = document.createElement('canvas');
   canvas.width = W; canvas.height = H;
   const g = canvas.getContext('2d');
@@ -35,8 +41,20 @@ export function createVrMenu(items, { title = 'Menu', hint = '' } = {}) {
     roundRect(g, 0, 0, W, H, 28); g.fill();
     g.fillStyle = '#ffd27a'; g.font = '600 44px system-ui, sans-serif'; g.textBaseline = 'middle';
     g.fillText(title, PAD, HEADER / 2);
+    if (tabs) {
+      const tw = (W - PAD * 2) / pages.length;
+      pages.forEach((p, k) => {
+        const x = PAD + k * tw;
+        g.fillStyle = k === page ? '#ffd27a' : hover?.tab === k ? '#3a424a' : '#2d343b';
+        roundRect(g, x + 4, HEADER, tw - 8, ROW - 6, 12); g.fill();
+        g.fillStyle = k === page ? '#16191d' : '#e9ecef';
+        g.font = '600 32px system-ui, sans-serif'; g.textAlign = 'center';
+        g.fillText(p.title, x + tw / 2, HEADER + (ROW - 6) / 2, tw - 24);
+        g.textAlign = 'left';
+      });
+    }
     items.forEach((it, i) => {
-      const y = HEADER + i * ROW;
+      const y = TOP + i * ROW;
       const on = it.enabled ? it.enabled() : true;
       if (hover?.row === i && on) { g.fillStyle = 'rgba(255, 210, 122, 0.16)'; g.fillRect(8, y + 3, W - 16, ROW - 6); }
       g.fillStyle = on ? '#e9ecef' : '#6c757d';
@@ -63,9 +81,21 @@ export function createVrMenu(items, { title = 'Menu', hint = '' } = {}) {
   // Which row and which half of its value box a uv point on the panel is over.
   function at(uv) {
     const py = (1 - uv.y) * H;
-    const row = Math.floor((py - HEADER) / ROW);
-    if (row < 0 || row >= rows) return null;
+    if (tabs && py >= HEADER && py < HEADER + ROW) {
+      const k = Math.floor(((uv.x * W) - PAD) / ((W - PAD * 2) / pages.length));
+      return k >= 0 && k < pages.length ? { tab: k } : null;
+    }
+    const row = Math.floor((py - TOP) / ROW);
+    if (row < 0 || row >= items.length) return null;
     return { row, dir: uv.x < (VALUE_X0 + VALUE_X1) / 2 ? -1 : 1 };
+  }
+
+  function showPage(k) {
+    page = k;
+    items = pages[k].items;
+    hover = null;
+    held = null;
+    draw();
   }
 
   const raycaster = new THREE.Raycaster();
@@ -89,10 +119,21 @@ export function createVrMenu(items, { title = 'Menu', hint = '' } = {}) {
     // A row's point in world space, dir -1/+1 picking the half of the value box.
     rowPoint(row, dir = 1) {
       const u = dir < 0 ? VALUE_X0 + 0.05 : VALUE_X1 - 0.05;
-      const v = 1 - (HEADER + (row + 0.5) * ROW) / H;
+      const v = 1 - (TOP + (row + 0.5) * ROW) / H;
       mesh.updateMatrixWorld(true);
       return new THREE.Vector3((u - 0.5) * PANEL_W, (v - 0.5) * panelH, 0).applyMatrix4(mesh.matrixWorld);
     },
+    // The middle of a tab, in world space.
+    tabPoint(k) {
+      const u = (PAD + (k + 0.5) * ((W - PAD * 2) / pages.length)) / W;
+      const v = 1 - (HEADER + ROW / 2) / H;
+      mesh.updateMatrixWorld(true);
+      return new THREE.Vector3((u - 0.5) * PANEL_W, (v - 0.5) * panelH, 0).applyMatrix4(mesh.matrixWorld);
+    },
+    get page() { return page; },
+    showPage,
+    // Which page an item is on, and its row there.
+    pageOf(label) { return pages.findIndex((p) => p.items.some((it) => it.label === label)); },
     indexOf(label) { return items.findIndex((it) => it.label === label); },
     // One frame: aim with `ray` (an Object3D pointing down its -Z), press with
     // `down` (trigger held). Returns the distance to the panel, or null.
@@ -104,15 +145,21 @@ export function createVrMenu(items, { title = 'Menu', hint = '' } = {}) {
       hits.length = 0;
       raycaster.intersectObject(mesh, false, hits);
       const h = hits[0] ? at(hits[0].uv) : null;
-      if (h?.row !== hover?.row) { hover = h; draw(); }
+      if (h?.row !== hover?.row || h?.tab !== hover?.tab) { hover = h; draw(); }
       if (!down) { held = null; return hits[0]?.distance ?? null; }
+      if (!held && h?.tab !== undefined) {
+        showPage(h.tab);
+        held = { tab: true, frames: 0 };
+        return hits[0]?.distance ?? null;
+      }
+      if (held?.tab) return hits[0]?.distance ?? null;
       const fire = (row, dir) => {
         const it = items[row];
         if (it.enabled && !it.enabled()) return;
         it.press?.(dir);
         draw();
       };
-      if (!held && h) {
+      if (!held && h && h.row !== undefined) {
         fire(h.row, h.dir);
         held = { row: h.row, dir: h.dir, next: now + 0.45, frames: 0 };
       } else if (held && ++held.frames >= 8 && items[held.row].repeat && now >= held.next && h?.row === held.row) {

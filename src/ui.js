@@ -8,6 +8,19 @@ const FIELDS = [
   { key: 'jogPaceCountPer100m', label: 'Jogging pace count per 100 m', type: 'number', min: 25, max: 100, step: 1 },
   { key: 'timeScale', label: 'Time compression', type: 'select', options: [[1, '1x'], [2, '2x'], [3, '3x']] },
   { key: 'slopeEffects', label: 'Slope effects', type: 'checkbox' },
+  { key: 'infoUnits', label: 'Info card units', type: 'select', text: true, options: [['us', 'US (°F, mph, ft)'], ['metric', 'Metric']] },
+  { key: 'exploreMapPosition', label: 'Exploring: show me on the map', type: 'checkbox' },
+  { key: 'timeOfDay', label: 'Time of day (sun)', type: 'select',
+    options: [[-1, 'Now'], ...Array.from({ length: 24 }, (_, h) => [h * 60, `${String(h).padStart(2, '0')}:00`])] },
+  { key: 'shadows', label: 'Shadows', type: 'checkbox' },
+  { key: 'farView', label: 'Far view (aerial photos, far hills)', type: 'checkbox' },
+  { key: 'weather', label: 'Weather', type: 'select', text: true,
+    options: [['live', 'Live (now)'], ['replay', 'Replay a day'], ['clear', 'Clear'], ['partly', 'Partly cloudy'], ['overcast', 'Overcast'],
+      ['fog', 'Fog'], ['drizzle', 'Drizzle'], ['rain', 'Rain'], ['storm', 'Thunderstorm'], ['snow', 'Snow'], ['blizzard', 'Blizzard']] },
+  { key: 'weatherDate', label: 'Day to replay', type: 'date', text: true },
+  { key: 'season', label: 'Season', type: 'select', text: true,
+    options: [['auto', 'From the date'], ['spring', 'Spring'], ['summer', 'Summer'], ['autumn', 'Autumn'], ['winter', 'Winter']] },
+  { key: 'ambientVolume', label: 'Nature sounds volume', type: 'range', min: 0, max: 1, step: 0.05 },
   { key: 'footfallVolume', label: 'Footstep volume', type: 'range', min: 0, max: 1, step: 0.05 },
   { key: 'hapticStrength', label: 'Left-foot haptic strength', type: 'range', min: 0, max: 1, step: 0.05 },
   { key: 'vignette', label: 'Comfort vignette', type: 'range', min: 0, max: 1, step: 0.05 },
@@ -44,7 +57,11 @@ export function buildSettingsPanel(container, settings, onChange) {
       input = document.createElement('input');
       input.type = f.type;
       if (f.type === 'checkbox') input.checked = settings[f.key];
-      else {
+      else if (f.type === 'date') {
+        input.value = settings[f.key];
+        input.max = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+        input.min = '1940-01-01'; // the ERA5 archive starts in 1940
+      } else {
         input.min = f.min; input.max = f.max; input.step = f.step;
         input.value = settings[f.key];
       }

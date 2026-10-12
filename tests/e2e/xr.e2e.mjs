@@ -32,7 +32,7 @@ page.on('pageerror', (e) => errors.push(e.message));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 await page.addInitScript(mock);
 const BEACON = { x: 1150, z: 880 };
-await page.goto(`${base}?site=demo-synthetic&debug&beacon=${BEACON.x},${BEACON.z}`, { waitUntil: 'load' });
+await page.goto(`${base}?site=demo-synthetic&time=12:00&weather=clear&season=summer&debug&beacon=${BEACON.x},${BEACON.z}`, { waitUntil: 'load' });
 await page.waitForFunction(() => window.__landnav?.tools, null, { timeout: 60000 });
 await page.evaluate(() => { document.getElementById('help').hidden = true; });
 // Walking checks measure exact distances, so trees mustn't get in the way. The
@@ -395,7 +395,7 @@ await check('Trees: drawn around you, never on a stake, and the quality setting 
     l.settings.vegetation = 'medium';
     return s;
   });
-  assert.deepEqual(off, { near: 0, cut: 0, clutter: 0 });
+  assert.deepEqual(off, { near: 0, cut: 0, clutter: 0, bare: 0 });
   await page.evaluate(() => { const l = window.__landnav; l.settings.preset = 'open'; l.vegetation.setPreset('open'); l.run.end(l.run.course.start); });
 });
 
@@ -526,6 +526,137 @@ await check('Explore (desktop): Q teleports to the ground mid-screen; not during
   }
 });
 
+await check('Sun and clock: noon sun casts shadows; 23:00 is dark with night rules and stars; a course keeps its own time', async () => {
+  const state = async () => (await frames(4), page.evaluate(() => {
+    const l = window.__landnav;
+    return {
+      elev: l.env.elevation, dark: l.env.dark, cast: l.env.sun.castShadow, mapOn: l.renderer.shadowMap.enabled,
+      far: l.scene.fog.far, lamp: l.headlamp.intensity, stars: l.scene.getObjectByName('stars').visible,
+      treesCast: l.vegetation.trees.oak.crown.castShadow, groundTakes: l.terrain.group.children[0].receiveShadow,
+      hud: document.getElementById('hud').textContent,
+    };
+  }));
+  // Back in Explore: no course running.
+  await page.evaluate(() => { const l = window.__landnav; if (l.run && l.run.state !== 'ended') l.run.end(l.run.course.start); l.hideReview(); l.applyPreset(); });
+  let s = await state();
+  assert.ok(s.elev > 15 && !s.dark && s.cast && s.mapOn && !s.stars && s.treesCast && s.groundTakes, JSON.stringify(s));
+  assert.match(s.hud, /12:00/);
+  await page.evaluate(() => { const l = window.__landnav; l.settings.timeOfDay = 23 * 60; l.applyPreset(); });
+  s = await state();
+  assert.ok(s.elev < -10 && s.dark && !s.cast && s.stars && s.lamp > 0 && s.far === 60, JSON.stringify(s));
+  assert.match(s.hud, /23:00 {2}NIGHT/);
+  // A day course runs mid-morning whatever the clock says, and the clock comes back after.
+  await page.evaluate(async () => {
+    const l = window.__landnav;
+    await l.startCourse(await (await fetch('sites/demo-synthetic/courses/day-1.json')).json());
+  });
+  s = await state();
+  assert.ok(!s.dark && s.elev > 10 && s.cast, `course: ${JSON.stringify(s)}`);
+  await page.evaluate(() => { const l = window.__landnav; l.run.end(l.run.course.start); l.hideReview(); l.settings.timeOfDay = 12 * 60; l.applyPreset(); });
+  s = await state();
+  assert.ok(!s.dark && s.cast, JSON.stringify(s));
+  // Nature sounds start once the page has had a key press (browsers need a gesture).
+  await page.keyboard.press('KeyH');
+  await page.keyboard.press('KeyH');
+  await page.waitForFunction(() => window.__landnav.soundscape.ctx, null, { timeout: 5000 });
+});
+
+await check('Weather: live (Open-Meteo, mocked) rains; a replayed winter day snows on bare woods; picked fog closes in', async () => {
+  const hours = [...Array(24).keys()];
+  await page.route('**/api.open-meteo.com/**', (r) => r.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({
+    utc_offset_seconds: -14400,
+    current: { time: '2026-10-11T14:00', temperature_2m: 14, relative_humidity_2m: 96, rain: 5, showers: 0, snowfall: 0, weather_code: 63,
+      cloud_cover: 100, wind_speed_10m: 6, wind_direction_10m: 240, wind_gusts_10m: 11, visibility: 2500, snow_depth: 0 },
+  }) }));
+  await page.route('**/archive-api.open-meteo.com/**', (r) => r.fulfill({ contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({
+    utc_offset_seconds: -18000,
+    hourly: { time: hours.map((h) => `2021-02-01T${String(h).padStart(2, '0')}:00`), temperature_2m: hours.map(() => -3), weather_code: hours.map(() => 73),
+      cloud_cover: hours.map(() => 100), snowfall: hours.map(() => 1.2), rain: hours.map(() => 0), snow_depth: hours.map(() => 0.2),
+      wind_speed_10m: hours.map(() => 4), wind_direction_10m: hours.map(() => 330), relative_humidity_2m: hours.map(() => 90) },
+  }) }));
+  const state = () => page.evaluate(() => {
+    const l = window.__landnav;
+    const w = l.weather;
+    return { label: w.now.label, source: w.now.source, rain: l.scene.getObjectByName('rain').visible, snow: l.scene.getObjectByName('snow').visible,
+      far: l.scene.fog.far, wet: w.fx.wet, cover: w.fx.snowCover, leaf: w.phen.leaf, year: l.env.date.getUTCFullYear(), bare: l.vegetation.stats.bare,
+      status: w.service.status };
+  });
+  const set = (k, v) => page.evaluate(([k, v]) => { const l = window.__landnav; l.settings[k] = v; l.applyPreset(); }, [k, v]);
+  try {
+    await set('weather', 'live');
+    await page.waitForFunction(() => window.__landnav.weather.now.label === 'Rain', null, { timeout: 10000 });
+    await page.waitForTimeout(700);
+    let s = await state();
+    assert.ok(s.source === 'live' && s.rain && !s.snow && s.wet > 0.5 && s.far <= 2500, JSON.stringify(s));
+    await page.evaluate(() => { window.__landnav.settings.season = 'auto'; });
+    await page.evaluate(() => { window.__landnav.settings.weatherDate = '2021-02-01'; });
+    await set('weather', 'replay');
+    await page.waitForFunction(() => window.__landnav.weather.now.label === 'Snow', null, { timeout: 10000 });
+    await page.waitForTimeout(700);
+    s = await state();
+    assert.ok(s.year === 2021 && s.snow && !s.rain && s.cover === 1 && s.leaf === 0, JSON.stringify(s));
+    // Walk a little so the trees are redrawn for winter.
+    await page.evaluate(() => { window.__landnav.vegetation.last = null; });
+    await page.waitForTimeout(300);
+    assert.ok((await state()).bare > 0, 'bare hardwoods drawn');
+    await set('weather', 'fog');
+    await page.waitForTimeout(700);
+    s = await state();
+    assert.ok(s.far <= 130 && !s.snow && s.label === 'Fog', JSON.stringify(s));
+  } finally {
+    await page.unroute('**/api.open-meteo.com/**');
+    await page.unroute('**/archive-api.open-meteo.com/**');
+    await page.evaluate(() => { const l = window.__landnav; l.settings.season = 'summer'; l.settings.weather = 'clear'; l.applyPreset(); });
+  }
+});
+
+await check('Explore info card (Tab): time, sun, weather, grid, elevation; the map shows where you are, but not on a course', async () => {
+  await page.evaluate(() => { const l = window.__landnav; if (l.run && l.run.state !== 'ended') l.run.end(l.run.course.start); l.hideReview(); window.__t.goTo(1000, 1000); });
+  // Tab until the card is up (an earlier check may have left it showing).
+  for (let i = 0; i < 2 && !(await page.evaluate(() => window.__landnav.wrist.info.mesh.visible)); i++) {
+    await page.keyboard.press('Tab');
+    await frames(6);
+  }
+  let s = await page.evaluate(() => {
+    const l = window.__landnav;
+    return { info: l.wrist.info.mesh.visible, score: l.wrist.card.mesh.visible, here: l.tools.map.here.visible };
+  });
+  assert.ok(s.info && !s.score && s.here, JSON.stringify(s));
+  // Read the card back off its canvas: it should name the grid square and the weather.
+  const text = await page.evaluate(() => {
+    const l = window.__landnav;
+    return { grid: l.site.mgrs_gzd, label: l.weather.now.label };
+  });
+  assert.equal(text.label, 'Clear');
+  await page.keyboard.press('Tab');
+  await frames(2);
+  // A course: the card is the score card again, and the map keeps your secret.
+  // (Starting a course puts its score card up by itself.)
+  await page.evaluate(() => window.__t.course('day-1'));
+  await frames(4);
+  s = await page.evaluate(() => {
+    const l = window.__landnav;
+    return { info: l.wrist.info.mesh.visible, score: l.wrist.card.mesh.visible, here: l.tools.map.here.visible };
+  });
+  try {
+    assert.ok(!s.info && s.score && !s.here, JSON.stringify(s));
+  } finally {
+    // End it the way a player does: Enter twice.
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => window.__landnav.run.state === 'ended', null, { timeout: 5000 });
+    if (await page.evaluate(() => !document.getElementById('review').hidden)) await page.keyboard.press('Escape');
+  }
+  await frames(2);
+  // The result stays on the card until you put it away.
+  assert.ok(await page.evaluate(() => window.__landnav.wrist.card.mesh.visible));
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Tab');
+  await frames(4);
+  assert.ok(await page.evaluate(() => window.__landnav.wrist.info.mesh.visible), 'info card after the course');
+  await page.keyboard.press('Tab');
+});
+
 await check('Enter VR button is offered', async () => {
   await page.waitForFunction(() => !document.getElementById('vr').disabled, null, { timeout: 10000 });
   assert.equal(await page.textContent('#vr'), 'Enter VR');
@@ -625,6 +756,15 @@ await check('VR menu: hold X opens it; the trigger toggles woods, steps the pace
   await frames(2);
   // Point the right controller at a row (dir -1: left half of its value box) and pull the trigger.
   const pick = async (label, dir = 1) => {
+    // On another page? Pull the trigger on its tab first.
+    const tab = await page.evaluate((lab) => { const m = window.__landnav.vrMenu; const k = m.pageOf(lab); return k === m.page ? -1 : k; }, label);
+    if (tab >= 0) {
+      await page.evaluate((k) => window.__t.aim('right', 'ray', window.__t.eye(), window.__landnav.vrMenu.tabPoint(k).toArray()), tab);
+      await frames(2);
+      await page.evaluate(() => { window.__xr.buttons.right[0] = true; }); await frames(2);
+      await page.evaluate(() => { window.__xr.buttons.right[0] = false; }); await frames(2);
+      assert.equal(await page.evaluate(() => window.__landnav.vrMenu.page), tab, `tab for ${label}`);
+    }
     await page.evaluate(([lab, d]) => {
       const m = window.__landnav.vrMenu;
       const p = m.rowPoint(m.indexOf(lab), d);
@@ -641,7 +781,7 @@ await check('VR menu: hold X opens it; the trigger toggles woods, steps the pace
     await pick('Pace count per 100 m', -1);
     assert.equal(await page.evaluate(() => window.__landnav.settings.paceCountPer100m), before.pace - 1);
     await pick('Fly');
-    assert.equal(await page.evaluate(() => window.__landnav.fly), true);
+    assert.equal(await page.evaluate(() => window.__landnav.fly), true, JSON.stringify(await page.evaluate(() => { const l = window.__landnav; return { page: l.vrMenu.page, run: l.run?.state, open: l.vrMenu.open, hud: document.getElementById('hud').textContent }; })));
     const y0 = await page.evaluate(() => window.__landnav.player.position.y);
     await page.evaluate(() => { window.__xr.axes.right = [0, 0, 0, -1]; window.__xr.axes.left = [0, 0, 0, -1]; });
     await frames(20);

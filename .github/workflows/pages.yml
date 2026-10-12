@@ -50,6 +50,7 @@ jobs:
           sleep 1
           node tests/e2e/xr.e2e.mjs http://localhost:8080/
           node tests/e2e/builder.e2e.mjs http://localhost:8080/
+          node tests/e2e/instant.e2e.mjs http://localhost:8080/
 
   deploy:
     needs: [test, browser]

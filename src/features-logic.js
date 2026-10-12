@@ -160,3 +160,23 @@ export const STAKE_AVOID_M = 30;
 export function stakeAvoider(index, kinds = STAKE_AVOID_KINDS, metres = STAKE_AVOID_M) {
   return (p) => index.distanceTo(p.x, p.z, kinds, metres) < metres;
 }
+
+// The nearest point on any line feature of the given kinds within maxR, as
+// { x, z, d }, or null. For placing the sound of a stream.
+export function nearestLinePoint(index, x, z, kinds, maxR) {
+  let best = null;
+  const seen = new Set();
+  for (let cx = Math.floor((x - maxR) / CELL_M); cx <= Math.floor((x + maxR) / CELL_M); cx++) {
+    for (let cz = Math.floor((z - maxR) / CELL_M); cz <= Math.floor((z + maxR) / CELL_M); cz++) {
+      const cell = index.cells.get(index.key(cx, cz));
+      if (!cell) continue;
+      for (const s of cell.segs) {
+        if (!kinds.includes(s.kind) || seen.has(s)) continue;
+        seen.add(s);
+        const c = closestOnSegment(x, z, s.ax, s.az, s.bx, s.bz);
+        if (c.d <= maxR && (!best || c.d < best.d)) best = { x: c.x, z: c.z, d: c.d };
+      }
+    }
+  }
+  return best;
+}

@@ -2,6 +2,7 @@
 import * as THREE from 'three';
 import { decodeHeights, Heightfield } from './heightfield.js';
 import { dataUrl } from './data-url.js';
+import { GROUND_FX, patchGround } from './ground-fx.js';
 
 const CHUNKS = 8;
 const DETAIL_TILE_M = 6; // detail texture repeats every this many metres
@@ -212,13 +213,17 @@ export function buildTerrain(renderer, { site, field, skirtField }, { coverAt } 
   const ground = new THREE.MeshLambertMaterial({ vertexColors: true, map: detail });
   const canopyRange = { value: new THREE.Vector2(1e6, 2e6) };
   ground.onBeforeCompile = (sh) => {
-    sh.uniforms.canopyColor = { value: new THREE.Color(0x3d5428) };
+    sh.uniforms.canopyColor = GROUND_FX.canopyColor;
     sh.uniforms.canopyRange = canopyRange;
     sh.vertexShader = 'attribute float cover;\nvarying float vCover;\n'
       + sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vCover = cover;');
-    sh.fragmentShader = 'uniform vec3 canopyColor;\nuniform vec2 canopyRange;\nvarying float vCover;\n'
+    sh.uniforms.gfxAerialOn = { get value() { return GROUND_FX.aerialBox.value.w; } };
+    // Past the drawn trees the ground reads as canopy, unless the aerial photographs
+    // are there to show the real thing.
+    sh.fragmentShader = 'uniform vec3 canopyColor;\nuniform vec2 canopyRange;\nuniform float gfxAerialOn;\nvarying float vCover;\n'
       + sh.fragmentShader.replace('#include <color_fragment>',
-        '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, canopyColor, vCover * smoothstep(canopyRange.x, canopyRange.y, length(vViewPosition)));');
+        '#include <color_fragment>\n  diffuseColor.rgb = mix(diffuseColor.rgb, canopyColor, (1.0 - gfxAerialOn) * vCover * smoothstep(canopyRange.x, canopyRange.y, length(vViewPosition)));');
+    patchGround(sh, { withCover: true, aerial: true });
   };
 
   const cells = field.grid - 1;

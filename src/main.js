@@ -12,26 +12,38 @@ import { Locomotion } from './locomotion.js';
 import { Footfalls } from './footfalls.js';
 import { createVignette } from './vignette.js';
 import { buildSettingsPanel, setupVRButton } from './ui.js';
-import { gridAzimuth, gridToMagnetic } from './coords.js';
+import { gridAzimuth, gridToMagnetic, eightDigitGrid, sceneToUtm } from './coords.js';
 import { Tools } from './tools.js';
 import { loadMapTexture } from './map.js';
 import { CourseRun, loadCourse, loadCourseIndex, formatClock } from './course.js';
 import { generateCourse, validateCourse } from './course-logic.js';
 import { createBeadsModel, createScoreCard } from './wrist.js';
+import { createInfoCard } from './info-card.js';
+import { compassPoint, formatTemp, formatWind, formatDistance, formatElevation, formatLatLon, formatDay, utcLabel } from './info-logic.js';
+import { fromUtm } from './utm.js';
 import { Vegetation, VEGETATION_QUALITY } from './vegetation.js';
 import { forestCover, hashString } from './vegetation-logic.js';
-import { createSky, SKY } from './sky.js';
+import { Environment, castShadows } from './environment.js';
+import { worldTime, clockText, guessUtcOffsetMin, sceneDirection, localMidnight, sunTimes } from './sun-logic.js';
+import { Soundscape } from './soundscape.js';
+import { WeatherService, WeatherVisuals } from './weather.js';
+import { weatherEffects, phenology, seasonPhenology, dayOfYear, WEATHER_MODES, WEATHER_MODE_NAMES, SEASONS, presetWeather, seasonName } from './weather-logic.js';
+import { setGroundFx } from './ground-fx.js';
+import { SWAY } from './vegetation.js';
 import { loadFeatures, buildFeatures } from './features.js';
 import { LandCover, landcoverCover, NLCD_NAMES } from './landcover.js';
-import { FeatureIndex, stakeAvoider } from './features-logic.js';
+import { FeatureIndex, stakeAvoider, nearestLinePoint } from './features-logic.js';
 import { resolveCollisions } from './collision.js';
 import { analyzeRun, buildRunExport } from './aar-logic.js';
 import { drawReview, createReviewBoard, downloadRun } from './aar.js';
 import { createVrMenu, cycle } from './vr-menu.js';
 import { Teleporter } from './teleport.js';
 import { rayGround } from './teleport-logic.js';
-import { NIGHT_SKY, RED_LIGHT, NO_LIGHT, tintUnlit, createHeadlamp, HEADLAMP_INTENSITY } from './night.js';
+import { RED_LIGHT, NO_LIGHT, tintUnlit, createHeadlamp, HEADLAMP_INTENSITY } from './night.js';
 import { dataUrl } from './data-url.js';
+import { buildInstantSite, instantSiteData, cacheKey, loadCachedSite, saveCachedSite } from './instant-site.js';
+import { loadSkirtAerial, loadFarField, buildFarRing, fetchFarAerial } from './aerial.js';
+import { GROUND_FX } from './ground-fx.js';
 
 const params = new URLSearchParams(location.search);
 // The site comes from ?site=, else the first entry in sites/index.json (see start()).
@@ -63,9 +75,19 @@ renderer.xr.setFoveation(1); // fixed foveated rendering (spec section 11)
 document.getElementById('app').appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = SKY.horizon;
-const sky = createSky();
-scene.add(sky);
+// Sky, sun and light for the site's place and time (src/environment.js). The site
+// isn't known yet; start() tells it.
+const env = new Environment(scene, renderer, null);
+scene.background = new THREE.Color().copy(env.horizon);
+scene.fog = new THREE.Fog(new THREE.Color(), 1500, 7000);
+// Weather: where it comes from (made in start(), once the site is known) and the
+// rain, snow and lightning it draws.
+let weatherService = null;
+const weatherFx = new WeatherVisuals(scene);
+let weatherNow = presetWeather('clear');
+let fx = weatherEffects(weatherNow);
+let phen = { leaf: 1, autumn: 0, spring: 0 };
+let farRing = null; // terrain out to 20 km (src/aerial.js), once loaded
 
 const camera = new THREE.PerspectiveCamera(70, innerWidth / innerHeight, 0.05, 9000);
 camera.rotation.order = 'YXZ';
@@ -74,48 +96,51 @@ player.name = 'player';
 player.add(camera);
 scene.add(player);
 
-// Sky light plus warm bounce from the ground, so tree undersides and trunks aren't black.
-const hemi = new THREE.HemisphereLight(0xdfe9f3, 0x6b6250, 0.95);
-scene.add(hemi);
-// Low-ish sun from the south-west so slopes read clearly. No shadows in v1.
-const sun = new THREE.DirectionalLight(0xfff1dc, 2.2);
-sun.position.set(-0.55, 0.55, 0.62).multiplyScalar(1000);
-scene.add(sun);
-
 let vegetation = null;
 const headlamp = createHeadlamp(camera);
 let headlampOn = true;
 
+// Night rules (short sight, red light, luminous marks) apply on a night course, after
+// N, or when the clock says it's dark.
+const isNight = () => settings.night || env.dark;
+
+// How far you can see, by preset, darkness and (later) weather.
+// Dusk closes in gradually: from the day range at the end of civil twilight to the
+// night range once the sky is properly dark.
+function fogRange() {
+  // Open: haze, out to the horizon when the far terrain is there.
+  const open = farRing?.visible ? [2500, 32000] : [1500, 7000];
+  let day = settings.preset === 'woods' ? [settings.woodsVisibility * 0.15, settings.woodsVisibility] : open;
+  // Fog, rain and snow: you see as far as the weather report says.
+  if (fx.visibilityM < day[1]) day = [Math.min(day[0], fx.visibilityM * 0.04), Math.max(30, fx.visibilityM)];
+  if (settings.night) return [2, settings.nightVisibility];
+  if (!env.dark) return day;
+  const k = THREE.MathUtils.smoothstep(-env.elevation, 5, 12);
+  return [THREE.MathUtils.lerp(day[0], 2, k), THREE.MathUtils.lerp(day[1], settings.nightVisibility, k)];
+}
+
 // Woods: you see about 150 m. Open: light haze, so distant ridges fade like real air.
 // Night: starlight under the canopy, tree silhouettes to about 60 m, and a headlamp.
 function applyPreset() {
-  const night = settings.night;
-  const horizon = night ? NIGHT_SKY.horizon : SKY.horizon;
-  if (night) scene.fog = new THREE.Fog(horizon, 2, settings.nightVisibility);
-  else if (settings.preset === 'woods') scene.fog = new THREE.Fog(horizon, settings.woodsVisibility * 0.15, settings.woodsVisibility);
-  else scene.fog = new THREE.Fog(horizon, 1500, 7000);
-  scene.background = horizon;
-  const u = sky.material.uniforms;
-  u.top.value = night ? NIGHT_SKY.top : SKY.top;
-  u.horizon.value = horizon;
-  u.ground.value = night ? NIGHT_SKY.ground : SKY.ground;
-  hemi.intensity = night ? 0.05 : 0.95;
-  hemi.color.setHex(night ? 0x8a9cc8 : 0xdfe9f3);
-  sun.intensity = night ? 0 : 2.2;
+  updateWorldClock(true);
+  const night = isNight();
+  [scene.fog.near, scene.fog.far] = fogRange();
   headlamp.intensity = night && headlampOn ? HEADLAMP_INTENSITY : 0;
   tools?.compass.setNight(night);
   applyNightTint();
   if (vegetation) {
     vegetation.setPreset(settings.preset);
     vegetation.setNight(night);
+    vegetation.setLight(Math.min(1, env.hemi.intensity / 0.95 * 0.6 + env.sun.intensity / 2.2 * 0.4));
     applyCanopyRange();
   }
 }
 
 // What you read by (src/night.js): red under the headlamp, near black without it.
 function applyNightTint() {
-  const tint = settings.night ? (headlampOn ? RED_LIGHT : NO_LIGHT) : null;
+  const tint = isNight() ? (headlampOn ? RED_LIGHT : NO_LIGHT) : null;
   for (const root of [tools?.compass.group, tools?.map.group, wrist.card.mesh, run?.group]) tintUnlit(root, tint);
+  tintUnlit(wrist.info.mesh, tint);
 }
 
 function setNight(on) {
@@ -123,10 +148,91 @@ function setNight(on) {
   applyPreset();
 }
 
+// N, or the menu: night, or back to day (moving the clock to noon if it's dark out).
+function toggleDayNight() {
+  if (isNight()) {
+    settings.night = false;
+    if (env.dark) settings.timeOfDay = 12 * 60;
+    applyPreset();
+    showToast(`Day: ${timeOfDayText()}.`);
+  } else {
+    setNight(true);
+    showToast('Night. T switches the headlamp.');
+  }
+}
+
+// Time of day: the real time ("Now") or any hour you pick. Not remembered between visits.
+const TIME_CHOICES = [-1, ...Array.from({ length: 24 }, (_, h) => h * 60)];
+function setTimeOfDay(minutes) {
+  settings.timeOfDay = minutes;
+  settings.night = false;
+  applyPreset();
+}
+function timeOfDayText() {
+  const t = clockText(worldDate(), env.offsetMin);
+  return settings.timeOfDay < 0 ? `Now (${t})` : t;
+}
+
 function toggleHeadlamp() {
   headlampOn = !headlampOn;
   applyPreset();
-  if (settings.night) showToast(headlampOn ? 'Headlamp on.' : 'Headlamp off: only luminous marks show.');
+  if (isNight()) showToast(headlampOn ? 'Headlamp on.' : 'Headlamp off: only luminous marks show.');
+}
+
+// ---- The world clock: the sun follows the real time, or the time you pick ----
+
+let courseClockMin = -1; // a course runs at a fixed time of day
+let clockNext = 0;
+let wasNight = null;
+function clockMinutes() {
+  return run && run.state !== 'ended' ? courseClockMin : settings.timeOfDay;
+}
+// A replayed day puts the clock (and the sun) on that date.
+function replayDay() {
+  if (settings.weather !== 'replay' || (run && run.state !== 'ended')) return '';
+  if (settings.weatherDate) return settings.weatherDate;
+  const d = new Date(Date.now() - 365 * 86400000);
+  return d.toISOString().slice(0, 10);
+}
+function worldDate() {
+  return worldTime(Date.now(), clockMinutes(), env.offsetMin, replayDay());
+}
+
+// The weather and season for the world clock, and what they do to the scene.
+function updateWeather(date) {
+  if (weatherService) {
+    const minute = (date.getTime() - localMidnight(date, env.offsetMin)) / 60000;
+    weatherNow = weatherService.get(settings.weather, { date: replayDay(), minuteOfDay: minute });
+    if (weatherService.offsetMin !== null && settings.weather !== 'pick') env.offsetMin = weatherService.offsetMin;
+  }
+  fx = weatherEffects(weatherNow);
+  env.weather = { cloud: fx.cloud, gloom: fx.gloom };
+  const site = env.site;
+  phen = settings.season === 'auto'
+    ? phenology(dayOfYear(date, env.offsetMin), site?.center_lat ?? 38.5, site ? site.elev_ref + (site.elev_max - site.elev_min) / 2 : 300)
+    : seasonPhenology(settings.season);
+  setGroundFx(phen, fx);
+  vegetation?.setSeason(phen);
+  vegetation?.setVisibility(fx.visibilityM);
+}
+// Every half second (or at once with force): move the sun, recolour the sky, and
+// switch night rules on or off when dusk or dawn passes.
+function updateWorldClock(force = false) {
+  const now = performance.now();
+  if (!force && now < clockNext) return;
+  clockNext = now + 500;
+  const date = worldDate();
+  updateWeather(date);
+  env.setTime(date, { forceNight: settings.night });
+  // After dark, far things fade into the dark ground, not the pale strip of sky.
+  scene.fog.color.copy(env.horizon).multiplyScalar(isNight() ? 0.3 : 1);
+  scene.background.copy(env.horizon);
+  if (!settings.night) [scene.fog.near, scene.fog.far] = fogRange();
+  // Unlit far-tree cut-outs follow the light level.
+  vegetation?.setLight(Math.min(1, env.hemi.intensity / 0.95 * 0.6 + env.sun.intensity / 2.2 * 0.4));
+  const night = isNight();
+  if (!force && wasNight !== null && night !== wasNight) applyPreset();
+  wasNight = night;
 }
 
 // The ground reads as canopy where drawn trees stop.
@@ -139,6 +245,7 @@ const input = new DesktopInput(renderer.domElement, settings);
 const xrInput = new XRInput(renderer, settings);
 const loco = new Locomotion(settings);
 const footfalls = new Footfalls(settings);
+const soundscape = new Soundscape(settings);
 const vignette = createVignette();
 camera.add(vignette.mesh);
 
@@ -156,7 +263,9 @@ let lastRun = null;      // the last finished run (buildRunExport), for the revi
 const reviewBoard = createReviewBoard();
 scene.add(reviewBoard.mesh);
 let run = null;        // the current CourseRun, if a course is loaded
-const wrist = { beads: createBeadsModel(), card: createScoreCard(), cardShown: false };
+// The card on the wrist is the score card during a course (and its result after),
+// and the info card when exploring.
+const wrist = { beads: createBeadsModel(), card: createScoreCard(), info: createInfoCard(), cardShown: false, showResult: false };
 applyPreset();
 const coursePanel = document.getElementById('course');
 let boundaryWarning = '';
@@ -282,7 +391,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyQ') teleportDesktop();
   if (e.code === 'KeyN') {
     if (run && run.state !== 'ended') showToast('Day or night is set when the course starts (Course panel).');
-    else { setNight(!settings.night); showToast(settings.night ? 'Night. T switches the headlamp.' : 'Day.'); }
+    else toggleDayNight();
   }
   if (e.code === 'KeyL' && tools?.desktopMap) showToast(RULER_MESSAGES[tools.map.toggleRuler()]);
   if ((e.code === 'Delete' || e.code === 'Backspace') && tools?.desktopMap) {
@@ -303,6 +412,10 @@ function togglePanel() {
 function onSettingChange(key) {
   if (key === 'paceCountPer100m' || key === 'jogPaceCountPer100m') loco.pace.reset();
   if (key === 'vegetation') applyCanopyRange();
+  if (key === 'timeOfDay') setTimeOfDay(settings.timeOfDay);
+  if (key === 'shadows') env.setShadows(settings.shadows);
+  if (key === 'farView') { if (settings.farView && !farRing && siteData) loadFarView(siteData.site); applyFarView(); }
+  if (key === 'weather' || key === 'weatherDate' || key === 'season') applyPreset();
 }
 buildSettingsPanel(panel, settings, onSettingChange);
 
@@ -331,6 +444,60 @@ const head = new THREE.Vector3();
 const lastHeading = new THREE.Vector3(0, 0, -1);
 let snapArmed = true;
 
+// ---- Weather, every frame: rain and snow around you, lightning, wind ----
+
+const windTo = new THREE.Vector3();
+function updateWeatherFrame(dt) {
+  const d = sceneDirection(weatherNow.windFromDeg + 180, 0, env.site?.convergence_deg ?? 0);
+  windTo.set(d.x, 0, d.z).multiplyScalar(weatherNow.windMs);
+  const light = Math.min(1, env.hemi.intensity / 0.95);
+  weatherFx.update(dt, head, fx, windTo, light, weatherNow.thunder, (metres) => {
+    // Thunder arrives at the speed of sound.
+    setTimeout(() => soundscape.ctx && soundscape.thunder(Math.max(0.3, 1 - metres / 6000)), (metres / 343) * 1000);
+  });
+  // A flash lights everything for a moment.
+  env.hemi.intensity = env.hemiBase + weatherFx.flash * 2.5;
+  SWAY.time.value += dt;
+  SWAY.amp.value = 0.08 + fx.sway * 1.1;
+  // Clouds drift with the wind.
+  env.sky.uniforms.cloudShift.value.x += windTo.x * dt * 0.0006;
+  env.sky.uniforms.cloudShift.value.y += windTo.z * dt * 0.0006;
+}
+
+// ---- Nature sounds (src/soundscape.js) ----
+
+const listenFwd = new THREE.Vector3(), listenUp = new THREE.Vector3();
+let streamNear = null, streamNext = 0;
+function updateSound(dt) {
+  if (!soundscape.ctx && footfalls.ctx) soundscape.start(footfalls.ctx);
+  if (!soundscape.ctx || !terrain) return;
+  camera.getWorldDirection(listenFwd);
+  listenUp.set(0, 1, 0).applyQuaternion(camera.getWorldQuaternion(new THREE.Quaternion()));
+  const now = performance.now();
+  if (now > streamNext) {
+    streamNext = now + 500;
+    streamNear = featureIndex ? nearestLinePoint(featureIndex, head.x, head.z, ['stream'], 80) : null;
+  }
+  const w = weatherState();
+  const date = env.date ?? new Date();
+  const month = new Date(date.getTime() + env.offsetMin * 60000).getUTCMonth() + 1;
+  soundscape.update(dt, {
+    head, fwd: listenFwd, up: listenUp,
+    sunElev: env.elevation,
+    windMs: w.windMs,
+    cover: vegetation ? vegetation.coverAt(head.x, head.z) * (settings.preset === 'woods' ? 1 : 0.6) : 0,
+    heightAboveGround: head.y - terrain.heightAt(head.x, head.z),
+    stream: streamNear,
+    rainMmH: w.rainMmH, snowing: w.snowing, tempC: w.tempC, thunder: w.thunder,
+    month, leafOn: w.leafOn,
+  });
+}
+// The weather as the sound and light see it. Fair and breezy until weather.js says otherwise.
+function weatherState() {
+  const w = weatherNow;
+  return { windMs: w.windMs, rainMmH: w.rainMmH, snowing: w.snowCmH > 0, tempC: w.tempC, thunder: false, leafOn: phen.leaf };
+}
+
 // ---- In-headset menu (hold X) ----
 
 const courseRunning = () => run && run.state !== 'ended';
@@ -352,38 +519,66 @@ function setFly(on) {
   if (!fly && terrain) snapPlayerToGround();
 }
 const step = (key, lo, hi) => (dir) => changeSetting(key, Math.min(hi, Math.max(lo, settings[key] + dir)));
-const MENU_ITEMS = [
-  { label: 'Woods or open', value: () => (settings.preset === 'woods' ? 'Woods' : 'Open'),
-    press: () => { settings.preset = settings.preset === 'woods' ? 'open' : 'woods'; applyPreset(); saveSettings(settings); } },
-  { label: 'Day or night', value: () => (settings.night ? 'Night' : 'Day'), enabled: () => !courseRunning(),
-    press: () => setNight(!settings.night) },
-  { label: 'Headlamp', value: () => onOff(headlampOn), enabled: () => settings.night, press: () => toggleHeadlamp() },
-  { label: 'Fly', value: () => onOff(fly), enabled: () => !courseRunning(), press: () => setFly(!fly) },
-  { label: 'Teleport range', value: () => `${settings.teleportRange} m`,
-    press: (d) => changeSetting('teleportRange', cycle([20, 40, 60, 100, 150], settings.teleportRange, d)) },
-  { label: 'Trees', value: () => settings.vegetation[0].toUpperCase() + settings.vegetation.slice(1),
-    press: (d) => changeSetting('vegetation', cycle(['off', 'low', 'medium', 'high'], settings.vegetation, d)) },
-  { label: 'Trees and buildings block you', value: () => onOff(settings.collisions), press: () => changeSetting('collisions', !settings.collisions) },
-  { label: 'Pace count per 100 m', value: () => String(settings.paceCountPer100m), repeat: true, press: step('paceCountPer100m', 30, 120) },
-  { label: 'Jogging pace count', value: () => String(settings.jogPaceCountPer100m), repeat: true, press: step('jogPaceCountPer100m', 25, 100) },
-  { label: 'Time compression', value: () => `${settings.timeScale}x`, press: (d) => changeSetting('timeScale', cycle([1, 2, 3], settings.timeScale, d)) },
-  { label: 'Comfort vignette', value: () => `${Math.round(settings.vignette * 100)}%`,
-    press: (d) => changeSetting('vignette', cycle([0, 0.25, 0.5, 0.75, 1], settings.vignette, d)) },
-  { label: 'Turning (right stick)', value: () => ({ snap: 'Snap', smooth: 'Smooth', off: 'Off' })[settings.turn],
-    press: (d) => changeSetting('turn', cycle(['snap', 'smooth', 'off'], settings.turn, d)) },
-  { label: 'Snap angle', value: () => `${settings.snapTurnDeg}°`, enabled: () => settings.turn === 'snap',
-    press: (d) => changeSetting('snapTurnDeg', cycle([15, 30, 45], settings.snapTurnDeg, d)) },
-  { label: 'Smooth turn speed', value: () => `${settings.smoothTurnDegPerSec}°/s`, enabled: () => settings.turn === 'smooth',
-    press: (d) => changeSetting('smoothTurnDegPerSec', cycle([45, 90, 135], settings.smoothTurnDegPerSec, d)) },
-  { label: 'Compass lens', value: () => (settings.units === 'mils' ? 'Mils' : 'Degrees'),
-    press: () => changeSetting('units', settings.units === 'mils' ? 'deg' : 'mils') },
-  { label: 'Assisted map readout', value: () => onOff(settings.assisted), press: () => changeSetting('assisted', !settings.assisted) },
-  { label: "Allow 'show my position'", value: () => onOff(settings.lostHelp), press: () => changeSetting('lostHelp', !settings.lostHelp) },
-  { label: 'Close', press: () => vrMenu.hide() },
+// Three pages, picked with the tabs along the top.
+const MENU_PAGES = [
+  { title: 'World', items: [
+    { label: 'Time of day', value: () => timeOfDayText(), enabled: () => !courseRunning(), repeat: true,
+      press: (d) => setTimeOfDay(cycle(TIME_CHOICES, settings.timeOfDay, d)) },
+    { label: 'Weather', value: () => WEATHER_MODE_NAMES[settings.weather] ?? settings.weather,
+      press: (d) => changeSetting('weather', cycle(WEATHER_MODES, settings.weather, d)) },
+    { label: 'Replay date', value: () => replayDay() || '-', enabled: () => settings.weather === 'replay' && !courseRunning(), repeat: true,
+      press: (d) => changeSetting('weatherDate', shiftDate(replayDay(), d)) },
+    { label: 'Season', value: () => (settings.season === 'auto' ? 'From the date' : settings.season[0].toUpperCase() + settings.season.slice(1)),
+      press: (d) => changeSetting('season', cycle(SEASONS, settings.season, d)) },
+    { label: 'Woods or open', value: () => (settings.preset === 'woods' ? 'Woods' : 'Open'),
+      press: () => { settings.preset = settings.preset === 'woods' ? 'open' : 'woods'; applyPreset(); saveSettings(settings); } },
+    { label: 'Headlamp', value: () => onOff(headlampOn), enabled: () => isNight(), press: () => toggleHeadlamp() },
+    { label: 'Shadows', value: () => onOff(settings.shadows), press: () => changeSetting('shadows', !settings.shadows) },
+    { label: 'Far view (photos, far hills)', value: () => onOff(settings.farView), press: () => changeSetting('farView', !settings.farView) },
+    { label: 'Trees', value: () => settings.vegetation[0].toUpperCase() + settings.vegetation.slice(1),
+      press: (d) => changeSetting('vegetation', cycle(['off', 'low', 'medium', 'high'], settings.vegetation, d)) },
+    { label: 'Nature sounds', value: () => `${Math.round(settings.ambientVolume * 100)}%`,
+      press: (d) => changeSetting('ambientVolume', cycle([0, 0.2, 0.4, 0.6, 0.8, 1], settings.ambientVolume, d)) },
+    { label: 'Close', press: () => vrMenu.hide() },
+  ] },
+  { title: 'Moving', items: [
+    { label: 'Fly', value: () => onOff(fly), enabled: () => !courseRunning(), press: () => setFly(!fly) },
+    { label: 'Teleport range', value: () => `${settings.teleportRange} m`,
+      press: (d) => changeSetting('teleportRange', cycle([20, 40, 60, 100, 150], settings.teleportRange, d)) },
+    { label: 'Turning (right stick)', value: () => ({ snap: 'Snap', smooth: 'Smooth', off: 'Off' })[settings.turn],
+      press: (d) => changeSetting('turn', cycle(['snap', 'smooth', 'off'], settings.turn, d)) },
+    { label: 'Snap angle', value: () => `${settings.snapTurnDeg}°`, enabled: () => settings.turn === 'snap',
+      press: (d) => changeSetting('snapTurnDeg', cycle([15, 30, 45], settings.snapTurnDeg, d)) },
+    { label: 'Smooth turn speed', value: () => `${settings.smoothTurnDegPerSec}°/s`, enabled: () => settings.turn === 'smooth',
+      press: (d) => changeSetting('smoothTurnDegPerSec', cycle([45, 90, 135], settings.smoothTurnDegPerSec, d)) },
+    { label: 'Trees and buildings block you', value: () => onOff(settings.collisions), press: () => changeSetting('collisions', !settings.collisions) },
+    { label: 'Pace count per 100 m', value: () => String(settings.paceCountPer100m), repeat: true, press: step('paceCountPer100m', 30, 120) },
+    { label: 'Jogging pace count', value: () => String(settings.jogPaceCountPer100m), repeat: true, press: step('jogPaceCountPer100m', 25, 100) },
+    { label: 'Time compression', value: () => `${settings.timeScale}x`, press: (d) => changeSetting('timeScale', cycle([1, 2, 3], settings.timeScale, d)) },
+    { label: 'Comfort vignette', value: () => `${Math.round(settings.vignette * 100)}%`,
+      press: (d) => changeSetting('vignette', cycle([0, 0.25, 0.5, 0.75, 1], settings.vignette, d)) },
+    { label: 'Close', press: () => vrMenu.hide() },
+  ] },
+  { title: 'Tools', items: [
+    { label: 'Compass lens', value: () => (settings.units === 'mils' ? 'Mils' : 'Degrees'),
+      press: () => changeSetting('units', settings.units === 'mils' ? 'deg' : 'mils') },
+    { label: 'Assisted map readout', value: () => onOff(settings.assisted), press: () => changeSetting('assisted', !settings.assisted) },
+    { label: "Allow 'show my position'", value: () => onOff(settings.lostHelp), press: () => changeSetting('lostHelp', !settings.lostHelp) },
+    { label: 'Exploring: me on the map', value: () => onOff(settings.exploreMapPosition), press: () => changeSetting('exploreMapPosition', !settings.exploreMapPosition) },
+    { label: 'Info card units', value: () => (settings.infoUnits === 'metric' ? 'Metric' : 'US'),
+      press: () => changeSetting('infoUnits', settings.infoUnits === 'metric' ? 'us' : 'metric') },
+    { label: 'Close', press: () => vrMenu.hide() },
+  ] },
 ];
-const vrMenu = createVrMenu(MENU_ITEMS, {
+// A day earlier or later, never past yesterday (there's no record of tomorrow yet).
+function shiftDate(ymd, days) {
+  const t = Date.parse(`${ymd}T12:00:00Z`) + days * 86400000;
+  const latest = Date.now() - 86400000;
+  return new Date(Math.min(t, latest)).toISOString().slice(0, 10);
+}
+const vrMenu = createVrMenu(MENU_PAGES, {
   title: 'Menu',
-  hint: 'Point with the right controller, pull the trigger. Left or right side of a value steps it down or up. Hold X to close.',
+  hint: 'Point with the right controller and pull the trigger. The tabs pick a page; the left or right side of a value steps it down or up. Hold X to close.',
 });
 scene.add(vrMenu.mesh);
 // The right controller's pointer while the menu is open.
@@ -533,8 +728,19 @@ const ground = {
   collide,
 };
 
+// What's underfoot: a road or trail from the site's features, else leaf litter
+// under trees, else grass.
+function surfaceUnder(x, z) {
+  const f = featureIndex?.surfaceAt(x, z);
+  if (f === 'road' || f === 'parking' || f === 'track' || f === 'trail' || f === 'stream') return f;
+  return vegetation && vegetation.coverAt(x, z) > 0.4 ? 'litter' : 'grass';
+}
+
 function playFeet(feet, haptics) {
-  for (const foot of feet) footfalls.play(foot, haptics);
+  if (!feet.length) return;
+  camera.getWorldPosition(head);
+  const surface = surfaceUnder(head.x, head.z);
+  for (const foot of feet) footfalls.play(foot, haptics, surface);
 }
 
 function updateDesktop(dt) {
@@ -663,7 +869,13 @@ const HINTS = {
 
 function setCardShown(shown) {
   wrist.cardShown = shown;
-  wrist.card.mesh.visible = shown;
+  if (!shown) wrist.showResult = false;
+  updateCardKind();
+}
+function updateCardKind() {
+  const score = !!run && (run.state !== 'ended' || wrist.showResult);
+  wrist.card.mesh.visible = wrist.cardShown && score;
+  wrist.info.mesh.visible = wrist.cardShown && !score;
 }
 
 // The wrist kit lives on the left controller in VR and in the corners of the screen on desktop.
@@ -674,19 +886,23 @@ function mountWrist() {
     wrist.beads.group.position.set(-0.04, -0.06, 0.06);
     wrist.beads.group.rotation.set(0, 0, 0);
     wrist.beads.group.scale.setScalar(1);
-    grip.add(wrist.card.mesh);
-    wrist.card.mesh.position.set(0, 0.04, 0.12);
-    wrist.card.mesh.rotation.set(-1.15, 0, 0);
-    wrist.card.mesh.scale.setScalar(1);
+    for (const card of [wrist.card.mesh, wrist.info.mesh]) {
+      grip.add(card);
+      card.position.set(0, 0.04, 0.12);
+      card.rotation.set(-1.15, 0, 0);
+      card.scale.setScalar(1);
+    }
   } else {
     const t = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
     camera.add(wrist.beads.group);
     wrist.beads.group.position.set(-t * camera.aspect * 0.4 * 0.88, -0.06, -0.4);
     wrist.beads.group.scale.setScalar(0.9);
-    camera.add(wrist.card.mesh);
-    wrist.card.mesh.position.set(t * camera.aspect * 0.45 * 0.68, -0.02, -0.45);
-    wrist.card.mesh.rotation.set(0, 0, 0);
-    wrist.card.mesh.scale.setScalar(1.4);
+    for (const card of [wrist.card.mesh, wrist.info.mesh]) {
+      camera.add(card);
+      card.position.set(t * camera.aspect * 0.45 * 0.68, -0.02, -0.45);
+      card.rotation.set(0, 0, 0);
+      card.scale.setScalar(1.4);
+    }
   }
   wrist.beads.group.visible = !!run;
 }
@@ -701,6 +917,8 @@ async function startCourse(course, options = {}) {
   // The course sets the woods/open preset and day or night for this run (not saved).
   settings.preset = course.preset || settings.preset;
   settings.night = !!(course.night || options.night);
+  // A course runs at a set time of day: mid-morning, or 22:00 for a night course.
+  courseClockMin = settings.night ? 22 * 60 : 10 * 60 + 30;
   headlampOn = true;
   applyPreset();
   tools?.map.clear();
@@ -722,6 +940,76 @@ async function startCourse(course, options = {}) {
   coursePanel.hidden = true;
   showToast(`${course.name}: plot your points from the score card. The clock starts when you move.`);
   return run;
+}
+
+// ---- Explore: the info card, and your position on the map ----
+
+let infoNext = 0;
+let sunDayKey = '', sunDay = null;
+const exploring = () => !run || run.state === 'ended';
+function updateExplore(x, z) {
+  updateCardKind();
+  const now = performance.now();
+  // Exploring, the map shows where you are (no penalty: there's no course).
+  if (tools) {
+    if (exploring() && settings.exploreMapPosition) tools.map.showPosition(x, z, facingGridAz());
+    else if (!revealUntil) tools.map.hidePosition();
+  }
+  if (!wrist.info.mesh.visible || now < infoNext) return;
+  infoNext = now + 500;
+  wrist.info.draw(infoCardContent(x, z));
+}
+
+function facingGridAz() {
+  if (renderer.xr.isPresenting) {
+    camera.getWorldDirection(fwd);
+    return gridAzimuth(fwd.x, fwd.z);
+  }
+  return gridAzimuth(-Math.sin(input.yaw), -Math.cos(input.yaw));
+}
+
+function infoCardContent(x, z) {
+  const site = siteData.site;
+  const u = settings.infoUnits;
+  const date = env.date ?? new Date();
+  const off = env.offsetMin;
+  const dayKey = `${Math.floor((date.getTime() + off * 60000) / 86400000)}:${off}`;
+  if (dayKey !== sunDayKey) { sunDayKey = dayKey; sunDay = sunTimes(date, site.center_lat, site.center_lon, off); }
+  const w = weatherNow;
+  const { easting, northing } = sceneToUtm(site, x, z);
+  const ll = fromUtm(easting, northing, parseInt(site.utm_zone, 10), !/S$/.test(site.utm_zone));
+  const gridAz = facingGridAz();
+  const magAz = gridToMagnetic(gridAz, site.gm_angle_deg);
+  const surface = featureIndex?.surfaceAt(x, z);
+  const cover = landcover ? NLCD_NAMES[landcover.classAt(x, z)] : null;
+  const ground = [surface, cover].filter(Boolean).join(', ') || (vegetation && vegetation.coverAt(x, z) > 0.4 ? 'woods' : 'open ground');
+  const sunUp = sunDay.rise && sunDay.set ? `up ${clockText(sunDay.rise, off)}, down ${clockText(sunDay.set, off)}` : 'no sunrise today';
+  const sunNow = env.elevation > -0.8 ? `${Math.round(env.elevation)}° up in the ${compassPoint(env.azimuth)}` : 'below the horizon';
+  const leaf = phen.leaf < 0.05 ? 'bare woods' : phen.leaf < 0.95 ? (phen.spring > 0 ? 'leafing out' : 'leaves falling') : phen.autumn > 0.2 ? 'autumn colour' : 'in leaf';
+  const source = weatherService?.status || '';
+  const hint = renderer.xr.isPresenting ? 'X hides this; hold X for the menu.' : 'Tab hides this.';
+  return {
+    title: site.name,
+    subtitle: `Exploring  ·  ${formatDay(date, off)}`,
+    rows: [
+      ['Time', `${clockText(date, off)} ${utcLabel(off)}${settings.timeOfDay >= 0 || replayDay() ? ' (set)' : ''}`],
+      ['Sun', sunUp],
+      ['', sunNow],
+      null,
+      ['Weather', w.label],
+      ['Temperature', formatTemp(w.tempC, u)],
+      ['Wind', formatWind(w.windMs, w.windFromDeg, w.gustMs, u)],
+      ['Visibility', formatDistance(w.visibilityM, u)],
+      ['Season', `${seasonName(phen)}, ${leaf}`],
+      null,
+      ['Grid', eightDigitGrid(site, x, z)],
+      ['Lat, lon', formatLatLon(ll.lat, ll.lon)],
+      ['Elevation', formatElevation(site.elev_ref + terrain.heightAt(x, z), u)],
+      ['Facing', `${Math.round(magAz)}° magnetic (${compassPoint(gridAz + (site.convergence_deg ?? 0))})`],
+      ['Ground', ground],
+    ],
+    footer: `${source}${/Open-Meteo/.test(source) ? ' (weather data by Open-Meteo.com)' : ''}. ${hint}`,
+  };
 }
 
 // The lost lifeline: a brief "you are here" on the map. Never automatic, always
@@ -779,6 +1067,7 @@ function currentPos() {
 function finishCourse(reason) {
   if (!run || run.state === 'ended') return;
   const r = run.end(currentPos(), reason);
+  wrist.showResult = true;
   setCardShown(true);
   showToast(`Course over: ${r.correct}/${r.total} correct, ${r.pass ? 'PASS' : 'FAIL'}.${reason === 'time' ? ' Out of time.' : ''}`);
   courseEnded();
@@ -846,10 +1135,12 @@ function courseTick(dt, x, z, moving) {
     revealUntil = 0;
     tools?.map.hidePosition();
   }
+  updateExplore(x, z);
   if (!run) return;
   const wasRunning = run.state === 'running';
   run.update(dt, { x, z }, { moving, mapOut: tools?.map.group.visible, compassOut: tools?.compass.group.visible, jog: moving && loco.lastGait === 'jog' });
   if (wasRunning && run.state === 'ended') {
+    wrist.showResult = true;
     setCardShown(true);
     showToast(`Time is up: ${run.result.correct}/${run.result.total} correct, ${run.result.pass ? 'PASS' : 'FAIL'}.`);
     courseEnded();
@@ -884,7 +1175,7 @@ function updateXRCourseControls() {
     onTap: () => { xrJog = !xrJog; xrStillSec = 0; xrInput.pulse('left', xrJog ? 0.4 : 0.15, 20); },
     onHold: () => { showMyPosition(); xrInput.pulse('left', 0.6, 60); },
   });
-  if (xrInput.justPressed('left', 'trigger') && settings.night) { toggleHeadlamp(); xrInput.pulse('left', 0.2, 15); }
+  if (xrInput.justPressed('left', 'trigger') && isNight()) { toggleHeadlamp(); xrInput.pulse('left', 0.2, 15); }
   // B shows or hides the review table (with the map up, B is the protractor).
   if (xrInput.justPressed('right', 'secondary') && !tools?.map.group.visible && lastRun) {
     if (reviewBoard.mesh.visible) reviewBoard.mesh.visible = false;
@@ -933,9 +1224,10 @@ function buildCoursePanel(index, sites = []) {
     sitePick.value = siteId;
     // A site is a whole new world: reload with it.
     sitePick.addEventListener('change', () => {
+      if (sitePick.value === siteId) return;
       const q = new URLSearchParams(location.search);
       q.set('site', sitePick.value);
-      q.delete('course');
+      for (const k of ['course', 'at', 'size', 'name', 'rebuild']) q.delete(k);
       location.search = q.toString();
     });
     coursePanel.append(sh, sitePick);
@@ -1001,7 +1293,7 @@ function buildCoursePanel(index, sites = []) {
   builder.className = 'note';
   const link = Object.assign(document.createElement('a'), { href: 'builder.html', textContent: 'Site builder' });
   link.style.color = '#ffd27a';
-  builder.append(link, ': make a site anywhere in the US, or add courses.');
+  builder.append(link, ': pick any spot in the US and explore it right away, or build a permanent site with courses.');
   coursePanel.append(h, select, seedRow, nightRow, startBtn, endBtn, reviewBtn, note, builder);
 }
 
@@ -1088,7 +1380,7 @@ function updateHud(dt) {
   const gait = fly ? 'FLY' : loco.lastSpeed > 0 && loco.lastGait === 'jog' ? 'JOG' : loco.tooSteepToJog ? 'WALK (too steep to jog)' : 'WALK';
   const mode = `${courseRunning() ? 'COURSE' : 'EXPLORE'}  ${gait}`;
   const lines = [
-    `${mode}  ${settings.preset}${settings.night ? `  NIGHT (headlamp ${headlampOn ? 'on' : 'off'})` : ''}  ${fps.toFixed(0)} fps  ${info.calls} calls  ${(info.triangles / 1000).toFixed(0)}k tris`,
+    `${mode}  ${settings.preset}  ${clockText(env.date ?? new Date(), env.offsetMin)}${isNight() ? `  NIGHT (headlamp ${headlampOn ? 'on' : 'off'})` : ''}  ${weatherNow.label}  ${fps.toFixed(0)} fps  ${info.calls} calls  ${(info.triangles / 1000).toFixed(0)}k tris`,
   ];
   // Never show the true position or the pace count during a run. Debug only.
   if (debug) {
@@ -1210,16 +1502,82 @@ async function loadSiteIndex() {
   }
 }
 
+// ?at=lat,lon[&size=m][&name=...]: a site built here in the browser (src/instant-site.js),
+// or the copy the browser kept from last time.
+async function loadInstantSite(at) {
+  const [lat, lon] = at.split(',').map(Number);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error(`"at=${at}" should be latitude,longitude`);
+  const size = [1000, 1500, 2000, 3000].includes(Number(params.get('size'))) ? Number(params.get('size')) : 2000;
+  const key = cacheKey(lat, lon, size);
+  let built = params.has('rebuild') ? null : await loadCachedSite(key);
+  if (built && params.get('name')) built.site.name = params.get('name');
+  if (!built) {
+    setStatus('Building this place from USGS, NLCD and OpenStreetMap data (about half a minute) ...');
+    built = await buildInstantSite({ lat, lon, size, name: params.get('name') || '', onProgress: (t) => setStatus(`Building: ${t}`) });
+    saveCachedSite(key, built);
+  }
+  const d = instantSiteData(built);
+  const mapTexture = new THREE.CanvasTexture(built.mapCanvas);
+  return { data: d, mapTexture, features: d.features, landcover: d.landcover, farField: d.farField };
+}
+
+// ---- The far view: aerial photographs on distant ground, terrain to the horizon ----
+
+async function loadFarView(site, farFieldIn) {
+  if (site.synthetic || farRing) return;
+  try {
+    await loadSkirtAerial(site);
+  } catch (err) {
+    console.warn('No aerial photographs:', err.message);
+  }
+  try {
+    let far = site.far, field = farFieldIn;
+    if (!field) ({ far, field } = await loadFarField(site));
+    const tex = await fetchFarAerial(site, far).catch(() => null);
+    farRing = buildFarRing(site, far, field, tex);
+    scene.add(farRing);
+    camera.far = 45000;
+    camera.updateProjectionMatrix();
+  } catch (err) {
+    console.warn('No far terrain:', err.message);
+  }
+  applyFarView();
+}
+function applyFarView() {
+  const on = settings.farView;
+  if (farRing) farRing.visible = on;
+  GROUND_FX.aerialBox.value.w = on && GROUND_FX.aerial.value.image?.width > 1 ? 1 : 0;
+  applyPreset();
+}
+
 async function start() {
   const sites = await loadSiteIndex();
+  const at = params.get('at');
+  let instant = null;
+  if (at) {
+    instant = await loadInstantSite(at);
+    siteId = instant.data.site.id;
+  }
   siteId ||= sites[0]?.id || 'demo-synthetic';
-  setStatus(`Loading site "${siteId}" ...`);
+  if (!instant) setStatus(`Loading site "${siteId}" ...`);
   const base = `sites/${encodeURIComponent(siteId)}`;
-  const [data, mapTexture] = await Promise.all([loadSite(base), loadMapTexture(base)]);
+  const [data, mapTexture] = instant ? [instant.data, instant.mapTexture] : await Promise.all([loadSite(base), loadMapTexture(base)]);
+  env.site = data.site;
+  env.offsetMin = guessUtcOffsetMin(data.site.center_lon, new Date());
+  weatherService = new WeatherService(data.site);
+  // ?weather=<mode>, ?date=YYYY-MM-DD, ?season=<season>: for checks and screenshots.
+  if (WEATHER_MODES.includes(params.get('weather'))) settings.weather = params.get('weather');
+  if (/^\d{4}-\d{2}-\d{2}$/.test(params.get('date') || '')) settings.weatherDate = params.get('date');
+  if (SEASONS.includes(params.get('season'))) settings.season = params.get('season');
+  // ?time=HH:MM puts the sun at that local time (for checks and screenshots).
+  if (/^\d{1,2}:\d{2}$/.test(params.get('time') || '')) {
+    const [hh, mm] = params.get('time').split(':').map(Number);
+    settings.timeOfDay = hh * 60 + mm;
+  }
   mapImage = mapTexture.image;
   lastRun = loadLastRun(data.site.id);
-  const features = await loadFeatures(base, data.site);
-  landcover = await loadLandCover(base, data.site);
+  const features = instant ? instant.features : await loadFeatures(base, data.site);
+  landcover = instant ? instant.landcover : await loadLandCover(base, data.site);
   // With land cover data the campground's thinner canopy is already in it.
   featureIndex = features ? new FeatureIndex(features, landcover ? { areaDensity: { campground: 1 } } : {}) : null;
   const vegSeed = hashString(data.site.id);
@@ -1237,12 +1595,20 @@ async function start() {
   });
   applyCanopyRange();
   scene.add(terrain.group);
-  scene.add(buildFeatures(features, data.field));
+  const featureGroup = buildFeatures(features, data.field);
+  scene.add(featureGroup);
+  // Shadows: trees and buildings cast them; the ground, roads and buildings take them.
+  castShadows(terrain.group, { cast: false, receive: true });
+  castShadows(featureGroup, { cast: false, receive: true });
+  for (const name of ['roofs', 'walls']) castShadows(featureGroup.getObjectByName(name), { cast: true, receive: true });
+  vegetation.castShadows();
+  env.setShadows(settings.shadows);
   tools = new Tools({ renderer, camera, site: data.site, mapTexture, settings });
   for (const hand of ['left', 'right']) if (hands[hand].grip) tools.attach(hand, hands[hand]);
   applyPreset(); // night tint and compass lume for the tools just made
   siteData = data;
-  buildCoursePanel(await loadCourseIndex(base), sites);
+  buildCoursePanel(instant ? [] : await loadCourseIndex(base), instant ? [...sites, { id: siteId, name: `${data.site.name} (built here)` }] : sites);
+  if (settings.farView) loadFarView(data.site, instant?.farField);
   mountWrist();
   if (debug && params.get('beacon')) {
     const [bx, bz] = params.get('beacon').split(',').map(Number);
@@ -1273,9 +1639,12 @@ async function start() {
     if (renderer.xr.isPresenting) updateXR(dt);
     else updateDesktop(dt);
     teleporter.tick(dt);
-    // Trees and sky follow the viewer.
+    // Trees, sky and the shadow box follow the viewer; the sun moves with the clock.
     camera.getWorldPosition(head);
-    sky.position.copy(head);
+    updateWorldClock();
+    env.follow(head);
+    updateWeatherFrame(dt);
+    updateSound(dt);
     vegetation.update(head.x, head.z);
     renderer.render(scene, camera);
     updateHud(dt);
@@ -1288,7 +1657,8 @@ async function start() {
     get lastRun() { return lastRun; },
     get xrJog() { return xrJog; },
     get fly() { return fly; },
-    teleporter, teleportTo,
+    teleporter, teleportTo, env, soundscape, applyPreset, weatherFx,
+    get weather() { return { service: weatherService, now: weatherNow, fx, phen }; },
     vrMenu, setFly,
     headlamp, setNight, toggleHeadlamp, get headlampOn() { return headlampOn; },
     showReview, hideReview, reviewBoard,
@@ -1298,7 +1668,7 @@ async function start() {
   // to run it at night.
   const want = params.get('course');
   if (want) {
-    const index = await loadCourseIndex(base);
+    const index = instant ? [] : await loadCourseIndex(base);
     const listed = index.find((c) => c.id === want);
     const opts = { night: params.has('night') };
     if (listed) await startCourse(await loadCourse(base, listed.file), opts);

@@ -22,7 +22,7 @@ function band(lat) {
   return Math.min(19, Math.floor((lat + 80) / 8));
 }
 
-function square(zone, north, eWest, nNorth, size) {
+export function utmSquare(zone, north, eWest, nNorth, size) {
   const ll = (e, n) => fromUtm(e, n, zone, north);
   const corners = [ll(eWest, nNorth), ll(eWest + size, nNorth), ll(eWest + size, nNorth - size), ll(eWest, nNorth - size)];
   const problems = [];
@@ -40,14 +40,14 @@ function square(zone, north, eWest, nNorth, size) {
 // The square make_site.py builds for a centre point and size.
 export function siteSquare(lat, lon, size = 2000) {
   const c = toUtm(lat, lon);
-  return square(c.zone, c.north, snap10(c.e - size / 2), snap10(c.n + size / 2), size);
+  return utmSquare(c.zone, c.north, snap10(c.e - size / 2), snap10(c.n + size / 2), size);
 }
 
 // The square of an existing site, from its site.json.
 export function existingSquare(site) {
   const zone = site.epsg % 100;
   const north = Math.floor(site.epsg / 100) === 326;
-  return square(zone, north, site.e_west, site.n_north, site.size_m);
+  return utmSquare(zone, north, site.e_west, site.n_north, site.size_m);
 }
 
 // Is a lat/lon inside the square, at least `margin` metres from its edges?
